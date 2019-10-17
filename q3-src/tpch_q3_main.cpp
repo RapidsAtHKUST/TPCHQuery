@@ -12,6 +12,20 @@ using namespace std;
 using namespace popl;
 using namespace std::chrono;
 
+inline size_t LinearSearch(const char *str, size_t i, size_t len, char token) {
+    while (i < len && str[i] != '&') { i++; }
+    return i;
+}
+
+inline int atoi_range(const char *str, size_t beg, size_t end) {
+    assert(beg < end);
+    int sum = str[beg];
+    for (auto i = beg + 1; i < end; i++) {
+        sum = sum * 10 + str[i];
+    }
+    return sum;
+}
+
 int main(int argc, char *argv[]) {
     OptionParser op("Allowed options");
     auto customer_option = op.add<Value<std::string>>("c", "customer-path", "the customer file path");
@@ -31,7 +45,27 @@ int main(int argc, char *argv[]) {
 
         // IO-Buffer, IO-Size in the Cap (max: 128KB)
         auto customer_path = customer_option.get()->value().c_str();
-        ParseFile(customer_path, []() {
+        ParseFile(customer_path, [](ParsingTask task) {
+            size_t i = EXTRA_IO_SIZE - 1;
+            auto buf = task.buf_;
+            while (buf[i] != LINUX_SPLITTER) {
+                i--;
+                assert(i >= 0);
+            }
+            assert(buf[i] == LINUX_SPLITTER);
+            while (i < task.size_) {
+                // 1st: consumer ID.
+                size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
+                if (end == task.size_)
+                    return;
+                int id = atoi_range(buf, i, end);
+
+                // 2nd: char [10]
+                i = end + 1;
+                if (end == task.size_)
+                    return;
+                
+            }
         }, IO_THREADS);
     }
     if (customer_filter_option->is_set() && order_filter_option->is_set() && line_item_filter_option->is_set()) {

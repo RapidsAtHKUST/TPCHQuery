@@ -15,6 +15,7 @@
 #define NUM_READ_BUFFERS (8)
 #define NUM_PARSERS (8)
 #define LINUX_SPLITTER ('\n')
+#define COL_SPLITTER ('|')
 #define IO_THREADS (8)
 
 struct ParsingTask {
@@ -22,6 +23,9 @@ struct ParsingTask {
     ssize_t size_;
 };
 
+/*
+ * F requires a single parameter (ParsingTask)
+ */
 template<typename F>
 void ParseFile(const char *file_name, F f, int io_threads = 1) {
     Timer timer;
@@ -36,7 +40,7 @@ void ParseFile(const char *file_name, F f, int io_threads = 1) {
     }
     vector<thread> threads(NUM_PARSERS);
     for (auto i = 0; i < NUM_PARSERS; i++) {
-        threads[i] = thread([&read_buffers, &parsing_tasks]() {
+        threads[i] = thread([&read_buffers, &parsing_tasks, f]() {
             while (true) {
                 ParsingTask task{.buf_=nullptr, .size_=0};
                 parsing_tasks.wait_dequeue(task);
@@ -44,6 +48,7 @@ void ParseFile(const char *file_name, F f, int io_threads = 1) {
                     return;
                 }
                 // Consume the Buffer.
+                f(task);
                 read_buffers.enqueue(task.buf_);
             }
         });
