@@ -2,25 +2,11 @@
 // Created by yche on 10/10/19.
 //
 
-#include <cassert>
-
-#include <chrono>
-#include <thread>
-
-#include <omp.h>
-
-#include "util/log.h"
 #include "util/program_options/popl.h"
 #include "util/primitives/parasort_cmp.h"
-#include "util/timer.h"
 #include "util/util.h"
-#include "util/pretty_print.h"
-#include "util/primitives/primitives.h"
-#include "util/primitives/libpopcnt.h"
-#include "util/primitives/boolarray.h"
-#include "util/primitives/blockingconcurrentqueue.h"
-#include "util/primitives/barrier.h"
-#include "util/aio.h"
+
+#include "file_parser.h"
 
 using namespace std;
 using namespace popl;
@@ -38,10 +24,15 @@ int main(int argc, char *argv[]) {
     auto limit_option = op.add<Value<int>>("3", "limit", "the limit number");
     op.parse(argc, argv);
 
-    Timer global_timer;
     if (customer_option->is_set() && order_option->is_set() && line_item_option->is_set()) {
         log_info("Path: %s, %s, %s", customer_option.get()->value().c_str(),
                  order_option.get()->value().c_str(), line_item_option->value().c_str());
+        //        auto customer_path = line_item_option.get()->value().c_str();
+
+        // IO-Buffer, IO-Size in the Cap (max: 128KB)
+        auto customer_path = customer_option.get()->value().c_str();
+        ParseFile(customer_path, []() {
+        }, IO_THREADS);
     }
     if (customer_filter_option->is_set() && order_filter_option->is_set() && line_item_filter_option->is_set()) {
         log_info("Filter: %s, %s, %s", customer_filter_option.get()->value().c_str(),
