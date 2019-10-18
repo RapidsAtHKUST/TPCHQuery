@@ -18,12 +18,8 @@
 
 using namespace std;
 
-#define BASE_YEAR (1970)
-#define DATE_LEN (12)
 #define Y_MUL (10000)
 #define M_MUL (100)
-
-char table[64] = "";
 
 // Assume YYYY-MM-DD
 uint32_t ConvertDateToUint32(const char *date) {
