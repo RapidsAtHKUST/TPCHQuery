@@ -10,6 +10,7 @@
 #include "util/log.h"
 #include "util/timer.h"
 #include "util/primitives/primitives.h"
+#include "util/primitives/blocking_queue.h"
 
 #define IO_REQ_SIZE (4 * 1024 * 1024)
 #define EXTRA_IO_SIZE (4 * 1024)
@@ -214,7 +215,8 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
     auto file_fd = open(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
     auto size = file_size(file_name);
 
-    moodycamel::BlockingConcurrentQueue<ParsingTask> parsing_tasks;
+//    moodycamel::BlockingConcurrentQueue<ParsingTask> parsing_tasks;
+    blocking_queue<ParsingTask> parsing_tasks;
     moodycamel::BlockingConcurrentQueue<char *> read_buffers;
     char *buf = (char *) malloc(IO_REQ_SIZE * sizeof(char) * NUM_BUFFERS);
     for (auto i = 0; i < NUM_BUFFERS; i++) {
@@ -222,22 +224,26 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
     }
     vector<thread> threads(NUM_PARSERS);
     vector<size_t> tls_sum(NUM_PARSERS * CACHE_LINE_ENTRY);
+    vector<size_t> tls_dequeue(NUM_PARSERS * CACHE_LINE_ENTRY);
     for (auto i = 0; i < NUM_PARSERS; i++) {
-        threads[i] = thread([&read_buffers, &parsing_tasks, f, i, &tls_sum]() {
+        threads[i] = thread([&read_buffers, &parsing_tasks, f, i, &tls_sum, &tls_dequeue]() {
             while (true) {
                 ParsingTask task{.buf_=nullptr, .size_=0};
-                parsing_tasks.wait_dequeue(task);
+                task = parsing_tasks.pop();
                 if (task.buf_ == nullptr) {
                     return;
                 }
                 // Consume the Buffer.
                 tls_sum[i * CACHE_LINE_ENTRY] += f(task);
+                tls_dequeue[i * CACHE_LINE_ENTRY]++;
                 read_buffers.enqueue(task.buf_);
             }
         });
     }
     log_info("Start IO, Size: %zu", size);
-#pragma omp parallel num_threads(io_threads)
+
+    size_t num_enqueue = 0;
+#pragma omp parallel num_threads(io_threads) reduction(+:num_enqueue)
     {
 #pragma omp for
         for (size_t i = 0; i < size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
@@ -254,11 +260,13 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
                 num_reads = pread(file_fd, tmp + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i)
                             + EXTRA_IO_SIZE;
             }
-            parsing_tasks.enqueue({.buf_= tmp, .size_= num_reads});
+            assert(tmp != nullptr);
+            parsing_tasks.push({.buf_= tmp, .size_= num_reads});
+            num_enqueue++;
         }
     }
     for (auto i = 0; i < NUM_PARSERS; i++) {
-        parsing_tasks.enqueue({.buf_=nullptr, .size_=-1});
+        parsing_tasks.push({.buf_=nullptr, .size_=-1});
     }
     for (auto i = 0; i < NUM_PARSERS; i++) {
         threads[i].join();
@@ -266,10 +274,12 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
     free(buf);
 
     size_t num_rows = 0;
+    size_t num_dequeue = 0;
     for (auto i = 0; i < NUM_PARSERS; i++) {
         num_rows += tls_sum[i * CACHE_LINE_ENTRY];
+        num_dequeue += tls_dequeue[i * CACHE_LINE_ENTRY];
     }
-    log_info("Finish IO, #Rows: %zu", num_rows);
+    log_info("Finish IO, #Rows: %zu, #Enqueue: %zu, #Dequeue: %zu", num_rows, num_enqueue, num_dequeue);
     log_info("Read Time: %.6lfs, QPS: %.3lf GB/s", timer.elapsed(), size / timer.elapsed() / pow(10, 9));
 }
 
