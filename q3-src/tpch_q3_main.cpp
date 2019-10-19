@@ -36,15 +36,11 @@ int main(int argc, char *argv[]) {
         atomic_int counter(0);
         char *strs = (char *) malloc(1024 * CUSTOMER_CATEGORY_LEN * sizeof(char));
         mutex mtx;
-        ParseFileMMAP(customer_path, [&counter, &strs, &mtx](ParsingTask task) {
-            ParseConsumer(task, strs, counter, mtx);
+        ParseFilePipeLine(customer_path, [&counter, &strs, &mtx](ParsingTask task) -> size_t {
+            return ParseConsumer(task, strs, counter, mtx);
         });
-        ParseFileMMAP(order_path, [](ParsingTask task) {
-            ParseOrder(task);
-        });
-        ParseFileMMAP(line_item_path, [](ParsingTask task) {
-            ParseLineItem(task);
-        });
+        ParseFilePipeLine(order_path, ParseOrder);
+        ParseFilePipeLine(line_item_path, ParseLineItem);
     }
     if (customer_filter_option->is_set() && order_filter_option->is_set() && line_item_filter_option->is_set()) {
         log_info("Filter: %s, %s, %s", customer_filter_option.get()->value().c_str(),

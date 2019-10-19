@@ -9,6 +9,7 @@
 #include "util/primitives/blockingconcurrentqueue.h"
 #include "util/log.h"
 #include "util/timer.h"
+#include "util/primitives/primitives.h"
 
 #define IO_REQ_SIZE (4 * 1024 * 1024)
 #define EXTRA_IO_SIZE (4 * 1024)
@@ -70,20 +71,22 @@ inline double StrToFloat(const char *p, size_t beg, size_t end) {
     return r;
 }
 
-inline void ParseConsumer(ParsingTask task, char *strs, atomic_int &counter, mutex &mtx) {
+inline size_t ParseConsumer(ParsingTask task, char *strs, atomic_int &counter, mutex &mtx) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
+    size_t size = 0;
+
     while (i < task.size_) {
         // 1st: CID.
         size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
-        if (end == task.size_)return;
+        if (end == task.size_)return size;
 
         int32_t id = StrToInt(buf, i, end);
         i = end + 1;
 
         // 2nd: Parse Category
         end = LinearSearch(buf, i, task.size_, LINUX_SPLITTER);
-        if (end == task.size_)return;
+        if (end == task.size_)return size;
 
         bool is_not_in = true;
         int old_table_size = counter;
@@ -112,61 +115,70 @@ inline void ParseConsumer(ParsingTask task, char *strs, atomic_int &counter, mut
             }
         }
         i = end + 1;
+        size++;
     }
+    return size;
 }
 
-inline void ParseOrder(ParsingTask task) {
+inline size_t ParseOrder(ParsingTask task) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
+    size_t size = 0;
+
     while (i < task.size_) {
         // 1st: OID.
         size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
-        if (end == task.size_)return;
+        if (end == task.size_)return size;
         int32_t id = StrToInt(buf, i, end);
         i = end + 1;
         assert(id > 0);
 
         // 2nd: CID.
         end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
-        if (end == task.size_)return;
+        if (end == task.size_)return size;
         int32_t cid = StrToInt(buf, i, end);
         i = end + 1;
         assert(cid > 0);
 
         // 3rd: Order-Date.
         end = LinearSearch(buf, i, task.size_, LINUX_SPLITTER);
-        if (end == task.size_)return;
+        if (end == task.size_)return size;
         uint32_t order_date = ConvertDateToUint32(buf + i);
         i = end + 1;
+        size++;
         assert(order_date > 0);
     }
+    return size;
 }
 
-inline void ParseLineItem(ParsingTask task) {
+inline size_t ParseLineItem(ParsingTask task) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
+    size_t size = 0;
     while (i < task.size_) {
         // 1st: OID.
         size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
-        if (end == task.size_)return;
+        if (end == task.size_)return size;
         int32_t id = StrToInt(buf, i, end);
         i = end + 1;
 //        assert(id > 0);
 
         // 2nd: Price.
         end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
-        if (end == task.size_)return;
+        if (end == task.size_)return size;
         double price = StrToFloat(buf, i, end);
         i = end + 1;
 //        assert(price > 0);
 
         // 3rd: Ship-Date.
         end = LinearSearch(buf, i, task.size_, LINUX_SPLITTER);
-        if (end == task.size_)return;
+        if (end == task.size_)return size;
         uint32_t ship_date = ConvertDateToUint32(buf + i);
         i = end + 1;
+        size++;
 //        assert(ship_date > 0);
     }
+    return size;
 }
 
 template<typename F>
@@ -175,6 +187,7 @@ void ParseFileSeq(const char *file_name, F f) {
     auto file_fd = open(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
     auto size = file_size(file_name);
 
+    size_t num_rows = 0;
     char *buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
     log_info("Start IO, Size: %zu", size);
     for (size_t i = 0; i < size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
@@ -185,10 +198,10 @@ void ParseFileSeq(const char *file_name, F f) {
             num_reads = pread(file_fd, buf + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i) + EXTRA_IO_SIZE;
             buf[EXTRA_IO_SIZE - 1] = LINUX_SPLITTER;
         }
-        f({.buf_= buf, .size_= num_reads});
+        num_rows += f({.buf_= buf, .size_= num_reads});
     }
     free(buf);
-    log_info("Finish IO");
+    log_info("Finish IO, #Rows: %zu", num_rows);
     log_info("Read Time: %.6lfs, QPS: %.3lf GB/s", timer.elapsed(), size / timer.elapsed() / pow(10, 9));
 }
 
@@ -208,8 +221,9 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
         read_buffers.enqueue(buf + i * IO_REQ_SIZE * sizeof(char));
     }
     vector<thread> threads(NUM_PARSERS);
+    vector<size_t> tls_sum(NUM_PARSERS * CACHE_LINE_ENTRY);
     for (auto i = 0; i < NUM_PARSERS; i++) {
-        threads[i] = thread([&read_buffers, &parsing_tasks, f]() {
+        threads[i] = thread([&read_buffers, &parsing_tasks, f, i, &tls_sum]() {
             while (true) {
                 ParsingTask task{.buf_=nullptr, .size_=0};
                 parsing_tasks.wait_dequeue(task);
@@ -217,7 +231,7 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
                     return;
                 }
                 // Consume the Buffer.
-                f(task);
+                tls_sum[i * CACHE_LINE_ENTRY] += f(task);
                 read_buffers.enqueue(task.buf_);
             }
         });
@@ -234,7 +248,7 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
                 read_buffers.wait_dequeue(tmp);
             }
             if (i != 0) {
-                num_reads = pread(file_fd, tmp, IO_REQ_SIZE, i);
+                num_reads = pread(file_fd, tmp, IO_REQ_SIZE, i - EXTRA_IO_SIZE);
             } else {
                 tmp[EXTRA_IO_SIZE - 1] = LINUX_SPLITTER;
                 num_reads = pread(file_fd, tmp + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i)
@@ -243,7 +257,6 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
             parsing_tasks.enqueue({.buf_= tmp, .size_= num_reads});
         }
     }
-    log_info("Finish IO");
     for (auto i = 0; i < NUM_PARSERS; i++) {
         parsing_tasks.enqueue({.buf_=nullptr, .size_=-1});
     }
@@ -251,6 +264,12 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
         threads[i].join();
     }
     free(buf);
+
+    size_t num_rows = 0;
+    for (auto i = 0; i < NUM_PARSERS; i++) {
+        num_rows += tls_sum[i * CACHE_LINE_ENTRY];
+    }
+    log_info("Finish IO, #Rows: %zu", num_rows);
     log_info("Read Time: %.6lfs, QPS: %.3lf GB/s", timer.elapsed(), size / timer.elapsed() / pow(10, 9));
 }
 
@@ -263,8 +282,9 @@ void ParseFileSelf(const char *file_name, F f, int io_threads = NUM_IO_THREADS) 
     auto file_fd = open(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
     auto size = file_size(file_name);
 
+    size_t num_rows = 0;
     log_info("Start IO, Size: %zu", size);
-#pragma omp parallel num_threads(io_threads)
+#pragma omp parallel num_threads(io_threads) reduction(+:num_rows)
     {
         char *tmp = (char *) malloc(IO_REQ_SIZE * sizeof(char));
 
@@ -273,17 +293,17 @@ void ParseFileSelf(const char *file_name, F f, int io_threads = NUM_IO_THREADS) 
             ssize_t num_reads;
 
             if (i != 0) {
-                num_reads = pread(file_fd, tmp, IO_REQ_SIZE, i);
+                num_reads = pread(file_fd, tmp, IO_REQ_SIZE, i - EXTRA_IO_SIZE);
             } else {
                 tmp[EXTRA_IO_SIZE - 1] = LINUX_SPLITTER;
                 num_reads = pread(file_fd, tmp + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i)
                             + EXTRA_IO_SIZE;
             }
-            f({.buf_= tmp, .size_= num_reads});
+            num_rows += f({.buf_= tmp, .size_= num_reads});
         }
         free(tmp);
     }
-    log_info("Finish IO");
+    log_info("Finish IO, #Rows: %zu", num_rows);
     log_info("Read Time: %.6lfs, QPS: %.3lf GB/s", timer.elapsed(), size / timer.elapsed() / pow(10, 9));
 }
 
@@ -298,7 +318,8 @@ void ParseFileMMAP(const char *file_name, F f, int io_threads = NUM_IO_THREADS) 
     char *mmap_mem = (char *) mmap(0, size, PROT_READ, MAP_PRIVATE, file_fd, 0);
 
     log_info("Start IO, Size: %zu", size);
-#pragma omp parallel num_threads(io_threads)
+    size_t num_rows = 0;
+#pragma omp parallel num_threads(io_threads) reduction(+:num_rows)
     {
         char *first_buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
         char *tmp = nullptr;
@@ -306,8 +327,8 @@ void ParseFileMMAP(const char *file_name, F f, int io_threads = NUM_IO_THREADS) 
         for (size_t i = 0; i < size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
             ssize_t num_reads;
             if (i != 0) {
-                num_reads = min<ssize_t>(size - i, IO_REQ_SIZE);
-                tmp = mmap_mem + i;
+                num_reads = min<ssize_t>(size - i + EXTRA_IO_SIZE, IO_REQ_SIZE);
+                tmp = mmap_mem + i - EXTRA_IO_SIZE;
             } else {
                 num_reads = min<ssize_t>(size - i, IO_REQ_SIZE - EXTRA_IO_SIZE);
                 memcpy(first_buf + EXTRA_IO_SIZE, mmap_mem, num_reads);
@@ -315,10 +336,10 @@ void ParseFileMMAP(const char *file_name, F f, int io_threads = NUM_IO_THREADS) 
                 tmp[EXTRA_IO_SIZE - 1] = LINUX_SPLITTER;
                 num_reads += EXTRA_IO_SIZE;
             }
-            f({.buf_= tmp, .size_= num_reads});
+            num_rows += f({.buf_= tmp, .size_= num_reads});
         }
         free(first_buf);
     }
-    log_info("Finish IO");
+    log_info("Finish IO, #Rows: %zu", num_rows);
     log_info("Read Time: %.6lfs, QPS: %.3lf GB/s", timer.elapsed(), size / timer.elapsed() / pow(10, 9));
 }
