@@ -23,6 +23,7 @@
 #define COL_SPLITTER ('|')
 
 #define CUSTOMER_CATEGORY_LEN (10)
+#define DATE_LEN (10)
 
 struct ParsingTask {
     char *buf_;
@@ -167,8 +168,8 @@ inline size_t ParseOrder(ParsingTask task) {
         assert(cid > 0);
 
         // 3rd: Order-Date.
-        end = LinearSearch(buf, i, task.size_, LINUX_SPLITTER);
-        if (end == task.size_)return size;
+        end = i + DATE_LEN;
+        if (end >= task.size_)return size;
         uint32_t order_date = ConvertDateToUint32(buf + i);
         i = end + 1;
         size++;
@@ -197,8 +198,8 @@ inline size_t ParseLineItem(ParsingTask task) {
 //        assert(price > 0);
 
         // 3rd: Ship-Date.
-        end = LinearSearch(buf, i, task.size_, LINUX_SPLITTER);
-        if (end == task.size_)return size;
+        end = i + DATE_LEN;
+        if (end >= task.size_)return size;
         uint32_t ship_date = ConvertDateToUint32(buf + i);
         i = end + 1;
         size++;
