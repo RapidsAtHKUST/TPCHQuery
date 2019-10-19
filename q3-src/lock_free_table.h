@@ -8,13 +8,18 @@
 
 using namespace std;
 
+struct String {
+    int16_t size;
+    char chars[CUSTOMER_CATEGORY_LEN];
+};
+
 class LockFreeLinearTable {
     atomic_int counter;
-    char *strs;
+    String *strs;
     mutex mtx;
 public:
     explicit LockFreeLinearTable(int cap) :
-            counter(0), strs((char *) malloc(cap * CUSTOMER_CATEGORY_LEN * sizeof(char))) {
+            counter(0), strs((String *) malloc(cap * sizeof(String))) {
     }
 
     int Insert(char *buf, size_t buf_beg, size_t buf_end) {
@@ -25,8 +30,10 @@ public:
             int new_table_size = counter;
             probe = LinearProbe(buf, buf_beg, buf_end, old_table_size, new_table_size);
             if (probe == INVALID) {
-                memcpy(strs + new_table_size * CUSTOMER_CATEGORY_LEN, buf + buf_beg, buf_end - buf_beg);
-                log_info("%.*s", buf_end - buf_beg, strs + new_table_size * CUSTOMER_CATEGORY_LEN);
+                strs[new_table_size].size = buf_end - buf_beg;
+                memcpy(strs[new_table_size].chars, buf + buf_beg, buf_end - buf_beg);
+//                log_info("SizeOf: %zu", sizeof(String));
+                log_info("%.*s", strs[new_table_size].size, strs[new_table_size].chars);
                 probe = new_table_size;
                 counter++;
             }
@@ -37,7 +44,8 @@ public:
     int LinearProbe(char *buf, size_t buf_beg, size_t buf_end, size_t it_beg, size_t it_end) {
         for (auto probe = it_beg; probe < it_end; probe++) {
             // Probe.
-            if (memcmp(buf + buf_beg, strs + CUSTOMER_CATEGORY_LEN * probe, buf_end - buf_beg) == 0) {
+            if (strs[probe].size == buf_end - buf_beg &&
+                memcmp(buf + buf_beg, strs[probe].chars, buf_end - buf_beg) == 0) {
                 return probe;
             }
         }
