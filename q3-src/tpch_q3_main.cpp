@@ -36,13 +36,13 @@ int main(int argc, char *argv[]) {
         atomic_int counter(0);
         char *strs = (char *) malloc(1024 * CUSTOMER_CATEGORY_LEN * sizeof(char));
         mutex mtx;
-        ParseFileSelf(customer_path, [&counter, &strs, &mtx](ParsingTask task) {
+        ParseFileMMAP(customer_path, [&counter, &strs, &mtx](ParsingTask task) {
             ParseConsumer(task, strs, counter, mtx);
         });
-        ParseFileSelf(order_path, [](ParsingTask task) {
+        ParseFileMMAP(order_path, [](ParsingTask task) {
             ParseOrder(task);
         });
-        ParseFileSelf(line_item_path, [](ParsingTask task) {
+        ParseFileMMAP(line_item_path, [](ParsingTask task) {
             ParseLineItem(task);
         });
     }

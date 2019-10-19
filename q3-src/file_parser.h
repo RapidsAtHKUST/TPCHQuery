@@ -181,11 +181,9 @@ void ParseFileSeq(const char *file_name, F f) {
         ssize_t num_reads;
         if (i != 0) {
             num_reads = pread(file_fd, buf, IO_REQ_SIZE, i - EXTRA_IO_SIZE);
-//            assert(num_reads <= IO_REQ_SIZE);
         } else {
-            num_reads = pread(file_fd, buf + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i);
+            num_reads = pread(file_fd, buf + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i) + EXTRA_IO_SIZE;
             buf[EXTRA_IO_SIZE - 1] = LINUX_SPLITTER;
-//            assert(num_reads <= IO_REQ_SIZE - EXTRA_IO_SIZE);
         }
         f({.buf_= buf, .size_= num_reads});
     }
@@ -235,14 +233,12 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
             if (tmp == nullptr) {
                 read_buffers.wait_dequeue(tmp);
             }
-//            assert(tmp != nullptr);
             if (i != 0) {
-                num_reads = pread(file_fd, tmp, IO_REQ_SIZE, i - EXTRA_IO_SIZE);
-//                assert(num_reads <= IO_REQ_SIZE);
+                num_reads = pread(file_fd, tmp, IO_REQ_SIZE, i);
             } else {
                 tmp[EXTRA_IO_SIZE - 1] = LINUX_SPLITTER;
-                num_reads = pread(file_fd, tmp + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i);
-//                assert(num_reads <= IO_REQ_SIZE - EXTRA_IO_SIZE);
+                num_reads = pread(file_fd, tmp + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i)
+                            + EXTRA_IO_SIZE;
             }
             parsing_tasks.enqueue({.buf_= tmp, .size_= num_reads});
         }
@@ -276,18 +272,52 @@ void ParseFileSelf(const char *file_name, F f, int io_threads = NUM_IO_THREADS) 
         for (size_t i = 0; i < size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
             ssize_t num_reads;
 
-//            assert(tmp != nullptr);
             if (i != 0) {
-                num_reads = pread(file_fd, tmp, IO_REQ_SIZE, i - EXTRA_IO_SIZE);
-//                assert(num_reads <= IO_REQ_SIZE);
+                num_reads = pread(file_fd, tmp, IO_REQ_SIZE, i);
             } else {
                 tmp[EXTRA_IO_SIZE - 1] = LINUX_SPLITTER;
-                num_reads = pread(file_fd, tmp + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i);
-//                assert(num_reads <= IO_REQ_SIZE - EXTRA_IO_SIZE);
+                num_reads = pread(file_fd, tmp + EXTRA_IO_SIZE, IO_REQ_SIZE - EXTRA_IO_SIZE, i)
+                            + EXTRA_IO_SIZE;
             }
             f({.buf_= tmp, .size_= num_reads});
         }
         free(tmp);
+    }
+    log_info("Finish IO");
+    log_info("Read Time: %.6lfs, QPS: %.3lf GB/s", timer.elapsed(), size / timer.elapsed() / pow(10, 9));
+}
+
+/*
+ * F requires a single parameter (ParsingTask)
+ */
+template<typename F>
+void ParseFileMMAP(const char *file_name, F f, int io_threads = NUM_IO_THREADS) {
+    Timer timer;
+    auto file_fd = open(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
+    auto size = file_size(file_name);
+    char *mmap_mem = (char *) mmap(0, size, PROT_READ, MAP_PRIVATE, file_fd, 0);
+
+    log_info("Start IO, Size: %zu", size);
+#pragma omp parallel num_threads(io_threads)
+    {
+        char *first_buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
+        char *tmp = nullptr;
+#pragma omp for
+        for (size_t i = 0; i < size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
+            ssize_t num_reads;
+            if (i != 0) {
+                num_reads = min<ssize_t>(size - i, IO_REQ_SIZE);
+                tmp = mmap_mem + i;
+            } else {
+                num_reads = min<ssize_t>(size - i, IO_REQ_SIZE - EXTRA_IO_SIZE);
+                memcpy(first_buf + EXTRA_IO_SIZE, mmap_mem, num_reads);
+                tmp = first_buf;
+                tmp[EXTRA_IO_SIZE - 1] = LINUX_SPLITTER;
+                num_reads += EXTRA_IO_SIZE;
+            }
+            f({.buf_= tmp, .size_= num_reads});
+        }
+        free(first_buf);
     }
     log_info("Finish IO");
     log_info("Read Time: %.6lfs, QPS: %.3lf GB/s", timer.elapsed(), size / timer.elapsed() / pow(10, 9));
