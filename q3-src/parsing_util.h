@@ -109,3 +109,29 @@ inline void ConvertUint32ToDate(char *date, uint32_t val) {
     ss << std::setw(2) << val;
     memcpy(date, ss.str().c_str(), 10);
 }
+
+#define Y_BASE (1970)
+#define M_BASE (01)
+#define D_BASE (01)
+#define MAX_DAYS_M (31)
+#define MAX_DAYS_Y (MAX_DAYS_M * 12)
+
+inline uint32_t ConvertDateToBucketID(const char *date) {
+    char buf[11];
+    memcpy(buf, date, sizeof(char) * 11);
+    return MAX_DAYS_Y * (StrToInt(buf, 0, 4) - Y_BASE) +
+           MAX_DAYS_M * (StrToInt(buf, 5, 7) - M_BASE)
+           + (StrToInt(buf, 8, 10) - D_BASE);
+}
+
+// Assume Large Enough for "YYYY-MM-DD" (10 chars)
+inline void ConvertBucketIDToDate(char *date, uint32_t val) {
+    stringstream ss;
+    ss << std::setw(4) << std::setfill('0') << (val / MAX_DAYS_Y + Y_BASE) << "-";
+    val %= MAX_DAYS_Y;
+    ss << std::setw(2) << (val / MAX_DAYS_M + M_BASE) << "-";
+    val %= MAX_DAYS_M;
+    ss << std::setw(2) << (val + D_BASE);
+    memcpy(date, ss.str().c_str(), 10);
+}
+

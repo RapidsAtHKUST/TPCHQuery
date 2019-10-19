@@ -11,6 +11,10 @@ using namespace std;
 struct String {
     int16_t size;
     char chars[CUSTOMER_CATEGORY_LEN];
+
+    void PrintStr(){
+        log_info("%.*s", size, chars);
+    }
 };
 
 class LockFreeLinearTable {
@@ -50,5 +54,11 @@ public:
             }
         }
         return INVALID;
+    }
+
+    void PrintTable() {
+        for (auto probe = 0; probe < counter; probe++) {
+            strs[probe].PrintStr();
+        }
     }
 };

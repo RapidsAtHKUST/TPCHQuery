@@ -54,6 +54,7 @@ int main(int argc, char *argv[]) {
             log_info("Finish IO, #Rows: %zu, Min-Max: %d, %d", num_rows, min_id, max_id);
             loader.PrintEndStat();
         }
+        lock_free_linear_table.PrintTable();
         ParseFilePRead(order_path, ParseOrder);
         ParseFilePRead(line_item_path, ParseLineItem);
     }
@@ -63,7 +64,8 @@ int main(int argc, char *argv[]) {
         const char *date = order_filter_option.get()->value().c_str();
         char date2[11];
         date2[10] = '\0';
-        log_info("%d", ConvertDateToUint32(date));
+
+        log_info("%d", ConvertDateToBucketID(date));
         ConvertUint32ToDate(date2, ConvertDateToUint32(date));
         log_info("%s", date2);
     }
