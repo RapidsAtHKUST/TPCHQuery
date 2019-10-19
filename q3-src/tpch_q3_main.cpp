@@ -2,11 +2,10 @@
 // Created by yche on 10/10/19.
 //
 #include <unordered_map>
-#include <mutex>
 
 #include "util/program_options/popl.h"
-#include "util/util.h"
 #include "file_parser.h"
+#include "file_loader.h"
 
 using namespace std;
 using namespace popl;
@@ -33,12 +32,28 @@ int main(int argc, char *argv[]) {
         auto order_path = order_option.get()->value().c_str();
         auto line_item_path = line_item_option.get()->value().c_str();
 
-        atomic_int counter(0);
-        char *strs = (char *) malloc(1024 * CUSTOMER_CATEGORY_LEN * sizeof(char));
-        mutex mtx;
-        ParseFilePRead(customer_path, [&counter, &strs, &mtx](ParsingTask task) -> size_t {
-            return ParseConsumer(task, strs, counter, mtx);
-        });
+
+        auto io_threads = std::thread::hardware_concurrency();
+        int32_t max_id = INT32_MIN;
+        int32_t min_id = INT32_MAX;
+        LockFreeLinearTable lock_free_linear_table(1024);
+        {
+            FileLoader loader(customer_path);
+            size_t num_rows = 0;
+#pragma omp parallel num_threads(io_threads) reduction(+:num_rows) reduction(max:max_id), reduction(min:min_id)
+            {
+                char *tmp = (char *) malloc(IO_REQ_SIZE * sizeof(char));
+#pragma omp for
+                for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
+                    ssize_t num_reads = loader.ReadToBuf(i, tmp);
+                    num_rows += ParseConsumer({.buf_= tmp, .size_= num_reads}, lock_free_linear_table,
+                                              max_id, min_id);
+                }
+                free(tmp);
+            }
+            log_info("Finish IO, #Rows: %zu, Min-Max: %d, %d", num_rows, min_id, max_id);
+            loader.PrintEndStat();
+        }
         ParseFilePRead(order_path, ParseOrder);
         ParseFilePRead(line_item_path, ParseLineItem);
     }

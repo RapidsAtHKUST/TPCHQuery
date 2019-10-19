@@ -6,6 +6,7 @@
 #include <omp.h>
 
 #include "local_buffer.h"
+#include "../timer.h"
 
 using namespace std;
 
