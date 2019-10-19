@@ -72,6 +72,31 @@ inline double StrToFloat(const char *p, size_t beg, size_t end) {
     return r;
 }
 
+#define Y_MUL (10000)
+#define M_MUL (100)
+
+// Assume YYYY-MM-DD
+inline uint32_t ConvertDateToUint32(const char *date) {
+    char buf[11];
+    memcpy(buf, date, sizeof(char) * 11);
+    buf[4] = '\0';
+    buf[7] = '\0';
+    buf[10] = '\0';
+    return Y_MUL * StrToInt(buf, 0, 4) + M_MUL * StrToInt(buf, 5, 7) + StrToInt(buf, 8, 10);
+}
+
+// Asssume Large Enough for "YYYY-MM-DD" (10 chars)
+inline void ConvertUint32ToDate(char *date, uint32_t val) {
+    stringstream ss;
+    ss << std::setw(4) << std::setfill('0') << val / Y_MUL << "-";
+    val %= Y_MUL;
+    ss << std::setw(2) << val / M_MUL << "-";
+    val %= M_MUL;
+    ss << std::setw(2) << val;
+    memcpy(date, ss.str().c_str(), 10);
+}
+
+
 inline size_t ParseConsumer(ParsingTask task, char *strs, atomic_int &counter, mutex &mtx) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
@@ -215,7 +240,6 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
     auto file_fd = open(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
     auto size = file_size(file_name);
 
-//    moodycamel::BlockingConcurrentQueue<ParsingTask> parsing_tasks;
     blocking_queue<ParsingTask> parsing_tasks;
     moodycamel::BlockingConcurrentQueue<char *> read_buffers;
     char *buf = (char *) malloc(IO_REQ_SIZE * sizeof(char) * NUM_BUFFERS);
@@ -287,7 +311,7 @@ void ParseFilePipeLine(const char *file_name, F f, int io_threads = NUM_IO_THREA
  * F requires a single parameter (ParsingTask)
  */
 template<typename F>
-void ParseFileSelf(const char *file_name, F f, int io_threads = NUM_IO_THREADS) {
+void ParseFilePRead(const char *file_name, F f, int io_threads = NUM_IO_THREADS) {
     Timer timer;
     auto file_fd = open(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
     auto size = file_size(file_name);
