@@ -25,6 +25,8 @@
 #define CUSTOMER_CATEGORY_LEN (10)
 #define DATE_LEN (10)
 
+//#define NAIVE_PARSING
+
 struct ParsingTask {
     char *buf_;
     ssize_t size_;
@@ -51,6 +53,17 @@ inline int32_t StrToInt(const char *str, size_t beg, size_t end) {
     return sum;
 }
 
+inline int32_t StrToIntOnline(const char *str, size_t beg, size_t &end, char token) {
+    if (beg == end) { return 0; }
+    int sum = str[beg] - '0';
+    auto i = beg + 1;
+    for (; i < end && str[i] != token; i++) {
+        sum = sum * 10 + (str[i] - '0');
+    }
+    end = i;
+    return sum;
+}
+
 double latter_digits[] = {
         1.0, 0.1, 0.01, 0.001, 0.0001, 0.00001, 0.000001, 0.0000001
 };
@@ -70,6 +83,28 @@ inline double StrToFloat(const char *p, size_t beg, size_t end) {
         frac = (frac * 10.0) + (p[beg] - '0');
     }
     r += frac * latter_digits[frac_size];
+    return r;
+}
+
+double StrToFloatOnline(const char *p, size_t beg, size_t &end, char token) {
+    if (beg == end) { return 0; }
+    double r = 0.0;
+    // Assume already 0-9 chars.
+    for (; beg < end && p[beg] != '.'; beg++) {
+        r = (r * 10.0) + (p[beg] - '0');
+    }
+    assert(beg == end || p[beg] == '.');
+    if (beg == end) { return 0; }
+    beg++;
+    double frac = 0.0;
+
+    auto prev_beg = beg;
+    for (; beg < end && p[beg] != token; beg++) {
+        frac = (frac * 10.0) + (p[beg] - '0');
+    }
+    auto frac_size = beg - prev_beg;
+    r += frac * latter_digits[frac_size];
+    end = beg;
     return r;
 }
 
@@ -97,7 +132,6 @@ inline void ConvertUint32ToDate(char *date, uint32_t val) {
     memcpy(date, ss.str().c_str(), 10);
 }
 
-
 inline size_t ParseConsumer(ParsingTask task, char *strs, atomic_int &counter, mutex &mtx) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
@@ -105,11 +139,17 @@ inline size_t ParseConsumer(ParsingTask task, char *strs, atomic_int &counter, m
 
     while (i < task.size_) {
         // 1st: CID.
+#ifdef NAIVE_PARSING
         size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return size;
-
         int32_t id = StrToInt(buf, i, end);
+#else
+        size_t end = task.size_;
+        int32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
+        if (end == task.size_)return size;
+#endif
         i = end + 1;
+        assert(id > 0);
 
         // 2nd: Parse Category
         end = LinearSearch(buf, i, task.size_, LINUX_SPLITTER);
@@ -154,16 +194,28 @@ inline size_t ParseOrder(ParsingTask task) {
 
     while (i < task.size_) {
         // 1st: OID.
+#ifdef NAIVE_PARSING
         size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return size;
         int32_t id = StrToInt(buf, i, end);
+#else
+        size_t end = task.size_;
+        int32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
+        if (end == task.size_)return size;
+#endif
         i = end + 1;
         assert(id > 0);
 
         // 2nd: CID.
+#ifdef NAIVE_PARSING
         end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return size;
         int32_t cid = StrToInt(buf, i, end);
+#else
+        end = task.size_;
+        int32_t cid = StrToIntOnline(buf, i, end, COL_SPLITTER);
+        if (end == task.size_)return size;
+#endif
         i = end + 1;
         assert(cid > 0);
 
@@ -184,18 +236,30 @@ inline size_t ParseLineItem(ParsingTask task) {
     size_t size = 0;
     while (i < task.size_) {
         // 1st: OID.
+#ifdef NAIVE_PARSING
         size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return size;
         int32_t id = StrToInt(buf, i, end);
+#else
+        size_t end = task.size_;
+        int32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
+        if (end == task.size_)return size;
+#endif
         i = end + 1;
-//        assert(id > 0);
+        assert(id > 0);
 
         // 2nd: Price.
+#ifdef NAIVE_PARSING
         end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return size;
         double price = StrToFloat(buf, i, end);
+#else
+        end = task.size_;
+        double price = StrToFloatOnline(buf, i, end, COL_SPLITTER);
+        if (end == task.size_)return size;
+#endif
         i = end + 1;
-//        assert(price > 0);
+        assert(price > 0);
 
         // 3rd: Ship-Date.
         end = i + DATE_LEN;
@@ -203,7 +267,7 @@ inline size_t ParseLineItem(ParsingTask task) {
         uint32_t ship_date = ConvertDateToUint32(buf + i);
         i = end + 1;
         size++;
-//        assert(ship_date > 0);
+        assert(ship_date > 0);
     }
     return size;
 }
