@@ -151,21 +151,21 @@ inline void ParseLineItem(ParsingTask task) {
         if (end == task.size_)return;
         int32_t id = StrToInt(buf, i, end);
         i = end + 1;
-        assert(id > 0);
+//        assert(id > 0);
 
         // 2nd: Price.
         end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return;
         double price = StrToFloat(buf, i, end);
         i = end + 1;
-        assert(price > 0);
+//        assert(price > 0);
 
         // 3rd: Ship-Date.
         end = LinearSearch(buf, i, task.size_, LINUX_SPLITTER);
         if (end == task.size_)return;
         uint32_t ship_date = ConvertDateToUint32(buf + i);
         i = end + 1;
-        assert(ship_date > 0);
+//        assert(ship_date > 0);
     }
 }
 

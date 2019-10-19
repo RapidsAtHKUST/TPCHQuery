@@ -13,13 +13,13 @@ using namespace popl;
 using namespace chrono;
 
 int main(int argc, char *argv[]) {
-//    log_info("%.9lf", StrToFloat("1.3", 0, 3));
+    log_info("%.9lf", StrToFloat("1.3", 0, 3));
     OptionParser op("Allowed options");
     auto customer_option = op.add<Value<string>>("c", "customer-path", "the customer file path");
     auto order_option = op.add<Value<string>>("o", "order-path", "the order file path");
     auto line_item_option = op.add<Value<string>>("l", "file-path", "the line item file path");
 
-    auto customer_filter_option = op.add<Value<string>>("0", "cf", "the custormer filter");
+    auto customer_filter_option = op.add<Value<string>>("0", "cf", "the customer filter");
     auto order_filter_option = op.add<Value<string>>("1", "of", "the order filter");
     auto line_item_filter_option = op.add<Value<string>>("2", "lf", "the line item filter");
     auto limit_option = op.add<Value<int>>("3", "limit", "the limit number");
