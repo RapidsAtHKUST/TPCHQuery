@@ -117,11 +117,20 @@ int main(int argc, char *argv[]) {
                 {
                     timer.reset();
                 }
-                int32_t num_buckets = max_order_date - min_order_date + 1;
+#pragma omp for
+                for (auto i = 0; i < size_of_orders; i++) {
+                    auto &order = orders[i];
+                    order.customer_key = customer_categories[order.customer_key];
+                }
+                int32_t second_level_range = max_order_date - min_order_date + 1;
+                int32_t num_buckets = second_level_range * lock_free_linear_table.Size();
                 BucketSortSmallBuckets(histogram, orders, reordered_orders, cur_write_off, bucket_ptrs,
-                                       size_of_orders, num_buckets, [orders, min_order_date](uint32_t it) {
-                            return orders[it].order_date_bucket - min_order_date;
-                        }, io_threads, &timer);
+                                       size_of_orders, num_buckets,
+                                       [orders, min_order_date, second_level_range](uint32_t it) {
+                                           Order order = orders[it];
+                                           return order.customer_key * second_level_range
+                                                  + order.order_date_bucket - min_order_date;
+                                       }, io_threads, &timer);
                 free(tmp);
                 free(local_buffer);
             }

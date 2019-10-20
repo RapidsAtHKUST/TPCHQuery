@@ -26,6 +26,10 @@ public:
             counter(0), strs((String *) malloc(cap * sizeof(String))) {
     }
 
+    int Size(){
+        return counter;
+    }
+
     int Insert(char *buf, size_t buf_beg, size_t buf_end) {
         int old_table_size = counter;
         auto probe = LinearProbe(buf, buf_beg, buf_end, 0, old_table_size);
