@@ -4,6 +4,7 @@
 #include <mutex>
 
 #include "util/archive.h"
+#include "util/log.h"
 
 #define CUSTOMER_CATEGORY_LEN (10)
 #define INVALID (-1)
@@ -31,7 +32,7 @@ struct String {
     }
 };
 
-int LinearProbe(vector<String> &strs, const char *buf, size_t buf_beg, size_t buf_end) {
+inline int LinearProbe(vector<String> &strs, const char *buf, size_t buf_beg, size_t buf_end) {
     size_t it_beg = 0;
     size_t it_end = strs.size();
     for (auto probe = it_beg; probe < it_end; probe++) {
