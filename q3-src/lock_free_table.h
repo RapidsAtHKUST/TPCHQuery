@@ -3,6 +3,8 @@
 #include <atomic>
 #include <mutex>
 
+#include "util/archive.h"
+
 #define CUSTOMER_CATEGORY_LEN (10)
 #define INVALID (-1)
 
@@ -15,19 +17,49 @@ struct String {
     void PrintStr() {
         log_info("%.*s", size, chars);
     }
+
+    template<typename T>
+    Archive<T> &Serialize(Archive<T> &archive) {
+        archive & size & chars;
+        return archive;
+    }
+
+    template<typename T>
+    const Archive<T> &Serialize(const Archive<T> &archive) {
+        archive & size & chars;
+        return archive;
+    }
 };
+
+int LinearProbe(vector<String> &strs, const char *buf, size_t buf_beg, size_t buf_end) {
+    size_t it_beg = 0;
+    size_t it_end = strs.size();
+    for (auto probe = it_beg; probe < it_end; probe++) {
+        // Probe.
+        if (strs[probe].size == buf_end - buf_beg &&
+            memcmp(buf + buf_beg, strs[probe].chars, buf_end - buf_beg) == 0) {
+            return probe;
+        }
+    }
+    assert(false);
+    return INVALID;
+}
 
 class LockFreeLinearTable {
     atomic_int counter;
-    String *strs;
+    vector<String> strs;
     mutex mtx;
 public:
     explicit LockFreeLinearTable(int cap) :
-            counter(0), strs((String *) malloc(cap * sizeof(String))) {
+            counter(0), strs(cap) {
     }
 
-    int Size(){
+    int Size() {
         return counter;
+    }
+
+    vector<String> GetTable() {
+        return vector<String>(begin(strs), begin(strs) + counter);
     }
 
     int Insert(char *buf, size_t buf_beg, size_t buf_end) {
@@ -66,7 +98,7 @@ public:
         }
     }
 
-    void PrintSlot(int i){
+    void PrintSlot(int i) {
         strs[i].PrintStr();
     }
 };

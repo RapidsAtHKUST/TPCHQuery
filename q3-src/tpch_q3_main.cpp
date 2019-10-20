@@ -2,16 +2,26 @@
 // Created by yche on 10/10/19.
 //
 #include <unordered_map>
+#include <fstream>
 
 #include "util/program_options/popl.h"
 #include "file_parser.h"
 #include "file_loader.h"
+#include "util/archive.h"
+#include "util/pretty_print.h"
 
 using namespace std;
 using namespace popl;
 using namespace chrono;
 
 #define TLS_WRITE_BUFF_SIZE (1024 * 1024)
+
+#define ORDER_KEY_BIN_FILE_SUFFIX ("_ORDER_KEY.rapids")
+#define ORDER_DATE_BIN_FILE_SUFFIX ("_ORDER_DATE.rapids")
+#define ORDER_META_BIN_FILE_SUFFIX ("_ORDER_META.rapids")
+#define LINE_ITEM_KEY_FILE_SUFFIX ("_LINE_ITEM_KEY.rapids")
+#define LINE_ITEM_PRICE_FILE_SUFFIX ("_LINE_ITEM_PRICE.rapids")
+#define LINE_ITEM_META_BIN_FILE_SUFFIX ("_LINE_ITEM_META.rapids")
 
 int main(int argc, char *argv[]) {
     log_info("%.9lf", StrToFloat("1.3", 0, 3));
@@ -35,7 +45,7 @@ int main(int argc, char *argv[]) {
         auto line_item_path = line_item_option.get()->value().c_str();
 
         auto io_threads = omp_get_max_threads();
-
+        log_info("Num Threads: %d", io_threads);
         // 1st: Init Customer List.
         int32_t max_id = INT32_MIN;
         int32_t min_id = INT32_MAX;
@@ -82,8 +92,8 @@ int main(int argc, char *argv[]) {
                      max_id - min_id + 1);
             loader.PrintEndStat();
         }
-
-
+        // Free Customers.
+        free(customers);
         lock_free_linear_table.PrintTable();
 
         // 2nd: Init Order List.
@@ -131,6 +141,7 @@ int main(int argc, char *argv[]) {
                                            return order.customer_key * second_level_range
                                                   + order.order_date_bucket - min_order_date;
                                        }, io_threads, &timer);
+                assert(bucket_ptrs[num_buckets] == MAX_NUM_ORDERS);
                 free(tmp);
                 free(local_buffer);
             }
@@ -138,6 +149,48 @@ int main(int argc, char *argv[]) {
                      max_order_date, max_order_date - min_order_date + 1);
             loader.PrintEndStat();
         }
+
+        // Free Orders, Saving Order Index.
+        Timer write_timer;
+        free(orders);
+        string prefix = order_path;
+        string order_key_path = prefix + ORDER_KEY_BIN_FILE_SUFFIX;
+        string order_date_path = prefix + ORDER_DATE_BIN_FILE_SUFFIX;
+        string order_meta_path = prefix + ORDER_META_BIN_FILE_SUFFIX;
+        {
+            ofstream ofs(order_meta_path, std::ofstream::out);
+            Archive<ofstream> ar(ofs);
+            auto category_table = lock_free_linear_table.GetTable();
+            for (auto e: category_table) {
+                e.PrintStr();
+            }
+            const char *test_chars = "BUILDING";
+            log_info("Probe Test: %d", LinearProbe(category_table, test_chars, 0, strlen(test_chars)));
+
+            int32_t second_level_range = max_order_date - min_order_date + 1;
+            int32_t num_buckets = second_level_range * lock_free_linear_table.Size();
+            vector<uint32_t> bucket_ptrs_stl(num_buckets + 1);
+            memcpy(&bucket_ptrs_stl.front(), bucket_ptrs, (num_buckets + 1) * sizeof(uint32_t));
+            ar << category_table << min_order_date << max_order_date
+               << second_level_range << num_buckets << bucket_ptrs_stl;
+            ofs.flush();
+        }
+        log_info("Meta Cost: %.6lfs", write_timer.elapsed());
+        // Key, Date...
+        int fd;
+        auto *key_output = GetMMAPArr<int32_t>(order_key_path.c_str(), fd, size_of_orders);
+        auto *date_output = GetMMAPArr<uint32_t>(order_date_path.c_str(), fd, size_of_orders);
+#pragma omp parallel
+        {
+#pragma omp for
+            for (size_t i = 0; i < size_of_orders; i++) {
+                key_output[i] = reordered_orders[i].key;
+                date_output[i] = reordered_orders[i].order_date_bucket;
+            }
+        }
+        log_info("Write Time: %.9lfs, TPS: %.3lf G/s", write_timer.elapsed(),
+                 sizeof(int32_t) * (size_of_orders) * 2 / write_timer.elapsed() / pow(10, 9));
+        free(reordered_orders);
 
         // 3rd: Init LineItem List.
         uint32_t max_ship_date = 0;
@@ -180,6 +233,7 @@ int main(int argc, char *argv[]) {
                      max_ship_date, max_ship_date - min_ship_date + 1);
             loader.PrintEndStat();
         }
+        free(items);
     }
     log_info("Mem Usage: %d KB", getValue());
 
