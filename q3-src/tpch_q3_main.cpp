@@ -14,12 +14,13 @@ using namespace std;
 using namespace popl;
 using namespace chrono;
 
+#define FILE_LOAD_PREAD
 #define TLS_WRITE_BUFF_SIZE (1024 * 1024)
 
 #define ORDER_KEY_BIN_FILE_SUFFIX ("_ORDER_KEY.rapids")
 #define ORDER_DATE_BIN_FILE_SUFFIX ("_ORDER_DATE.rapids")
 #define ORDER_META_BIN_FILE_SUFFIX ("_ORDER_META.rapids")
-#define LINE_ITEM_KEY_FILE_SUFFIX ("_LINE_ITEM_KEY.rapids")
+#define LINE_ITEM_ORDER_KEY_FILE_SUFFIX ("_LINE_ITEM_KEY.rapids")
 #define LINE_ITEM_PRICE_FILE_SUFFIX ("_LINE_ITEM_PRICE.rapids")
 #define LINE_ITEM_META_BIN_FILE_SUFFIX ("_LINE_ITEM_META.rapids")
 
@@ -107,18 +108,29 @@ int main(int argc, char *argv[]) {
         volatile uint32_t size_of_orders = 0;
         Timer timer;
         {
+#ifdef FILE_LOAD_PREAD
             FileLoader loader(order_path);
+#else
+            FileLoaderMMap loader(order_path);
+#endif
 #pragma omp parallel num_threads(io_threads)
             {
                 uint32_t buf_cap = TLS_WRITE_BUFF_SIZE;
                 auto *local_buffer = (Order *) malloc(sizeof(Order) * buf_cap);
                 OrderBuffer order_write_buffer(local_buffer, buf_cap, orders, &size_of_orders);
-                char *tmp = (char *) malloc(IO_REQ_SIZE * sizeof(char));
+                char *local_buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
 #pragma omp for reduction(max:max_order_date) reduction(min:min_order_date)
                 for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
-                    ssize_t num_reads = loader.ReadToBuf(i, tmp);
+#ifdef FILE_LOAD_PREAD
+                    ssize_t num_reads = loader.ReadToBuf(i, local_buf);
+                    ParseOrder({.buf_= local_buf, .size_= num_reads}, order_write_buffer,
+                               max_order_date, min_order_date);
+#else
+                    char *tmp = nullptr;
+                    ssize_t num_reads = loader.ReadToBuf(i, tmp, local_buf);
                     ParseOrder({.buf_= tmp, .size_= num_reads}, order_write_buffer,
                                max_order_date, min_order_date);
+#endif
                 }
                 order_write_buffer.submit_if_possible();
 
@@ -132,6 +144,10 @@ int main(int argc, char *argv[]) {
                     auto &order = orders[i];
                     order.customer_key = customer_categories[order.customer_key];
                 }
+#pragma omp single
+                {
+                    free(customer_categories);
+                }
                 int32_t second_level_range = max_order_date - min_order_date + 1;
                 int32_t num_buckets = second_level_range * lock_free_linear_table.Size();
                 BucketSortSmallBuckets(histogram, orders, reordered_orders, cur_write_off, bucket_ptrs,
@@ -142,7 +158,7 @@ int main(int argc, char *argv[]) {
                                                   + order.order_date_bucket - min_order_date;
                                        }, io_threads, &timer);
                 assert(bucket_ptrs[num_buckets] == MAX_NUM_ORDERS);
-                free(tmp);
+                free(local_buf);
                 free(local_buffer);
             }
             log_info("Finish IO, #Rows: %zu, Min-Max: [%d, %d], Range: %d", size_of_orders, min_order_date,
@@ -200,18 +216,29 @@ int main(int argc, char *argv[]) {
         uint32_t *cur_write_off_item, *bucket_ptrs_item;
         volatile uint32_t size_of_items = 0;
         {
+#ifdef FILE_LOAD_PREAD
             FileLoader loader(line_item_path);
+#else
+            FileLoaderMMap loader(line_item_path);
+#endif
 #pragma omp parallel num_threads(io_threads)
             {
                 uint32_t buf_cap = TLS_WRITE_BUFF_SIZE;
                 auto *local_buffer = (LineItem *) malloc(sizeof(LineItem) * buf_cap);
                 LineItemBuffer item_write_buffer(local_buffer, buf_cap, items, &size_of_items);
-                char *tmp = (char *) malloc(IO_REQ_SIZE * sizeof(char));
+                char *local_buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
 #pragma omp for reduction(max:max_ship_date) reduction(min:min_ship_date)
                 for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
-                    ssize_t num_reads = loader.ReadToBuf(i, tmp);
+#ifdef FILE_LOAD_PREAD
+                    ssize_t num_reads = loader.ReadToBuf(i, local_buf);
+                    ParseLineItem({.buf_= local_buf, .size_= num_reads}, item_write_buffer,
+                                  max_ship_date, min_ship_date);
+#else
+                    char *tmp = nullptr;
+                    ssize_t num_reads = loader.ReadToBuf(i, tmp, local_buf);
                     ParseLineItem({.buf_= tmp, .size_= num_reads}, item_write_buffer,
                                   max_ship_date, min_ship_date);
+#endif
                 }
                 item_write_buffer.submit_if_possible();
 
@@ -226,7 +253,7 @@ int main(int argc, char *argv[]) {
                                        [items, min_ship_date](uint32_t it) {
                                            return items[it].ship_date_bucket - min_ship_date;
                                        }, io_threads, &timer);
-                free(tmp);
+                free(local_buf);
                 free(local_buffer);
             }
             log_info("Finish IO, #Rows: %zu, Min-Max: [%d, %d], Range: %d", size_of_items, min_ship_date,
@@ -234,6 +261,36 @@ int main(int argc, char *argv[]) {
             loader.PrintEndStat();
         }
         free(items);
+
+        write_timer.reset();
+        prefix = line_item_path;
+        string item_order_id_path = prefix + LINE_ITEM_ORDER_KEY_FILE_SUFFIX;
+        string item_price_path = prefix + LINE_ITEM_PRICE_FILE_SUFFIX;
+        string item_meta_path = prefix + LINE_ITEM_META_BIN_FILE_SUFFIX;
+        {
+            ofstream ofs(item_meta_path, std::ofstream::out);
+            Archive<ofstream> ar(ofs);
+            int32_t num_buckets = max_ship_date - min_ship_date + 1;
+            vector<uint32_t> bucket_ptrs_stl(num_buckets + 1);
+            memcpy(&bucket_ptrs_stl.front(), bucket_ptrs_item, sizeof(uint32_t) * (num_buckets + 1));
+            ar << min_ship_date << max_ship_date << num_buckets << bucket_ptrs_stl;
+            ofs.flush();
+        }
+        log_info("Meta Cost: %.6lfs", write_timer.elapsed());
+        // Key, Date...
+        auto *lt_order_id_output = GetMMAPArr<int32_t>(item_order_id_path.c_str(), fd, size_of_items);
+        auto *lt_price_output = GetMMAPArr<double>(item_price_path.c_str(), fd, size_of_items);
+#pragma omp parallel
+        {
+#pragma omp for
+            for (size_t i = 0; i < size_of_items; i++) {
+                lt_order_id_output[i] = reordered_items[i].order_key;
+                lt_price_output[i] = reordered_items[i].price;
+            }
+        }
+        free(reordered_items);
+        log_info("Write Time: %.9lfs, TPS: %.3lf G/s", write_timer.elapsed(),
+                 (sizeof(int32_t) + sizeof(double)) * (size_of_items) / write_timer.elapsed() / pow(10, 9));
     }
     log_info("Mem Usage: %d KB", getValue());
 
