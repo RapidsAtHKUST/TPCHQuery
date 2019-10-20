@@ -193,9 +193,7 @@ void BucketSortSmallBuckets(vector<uint32_t> &histogram, T *&input, T *&output,
                             OFF *&cur_write_off, OFF *&bucket_ptrs,
                             size_t size, int32_t num_buckets, F f, int max_omp_threads, Timer *timer = nullptr) {
     int tid = omp_get_thread_num();
-    using BufT= LocalWriteBuffer<T, uint32_t>;
     auto cap = max<int>(CACHE_LINE_ENTRY, LOCAL_BUDGET / num_buckets / sizeof(T));
-    auto bucket_write_buffers = (BufT *) malloc(num_buckets * sizeof(BufT));
     auto bucket_buffers = (T *) malloc(cap * num_buckets * sizeof(T));
     // Populate.
 #pragma omp single
@@ -214,17 +212,19 @@ void BucketSortSmallBuckets(vector<uint32_t> &histogram, T *&input, T *&output,
     InclusivePrefixSumOMP(histogram, cur_write_off + 1, num_buckets, [&bucket_ptrs](uint32_t it) {
         return bucket_ptrs[it];
     }, max_omp_threads);
-    MemCpyOMP(bucket_ptrs, cur_write_off, num_buckets + 1, tid, max_omp_threads);
-
 #pragma omp single
     {
         if (timer != nullptr)log_info("[%s]: Before Scatter, Time: %.9lfs", __FUNCTION__, timer->elapsed());
     }
+
+    // Scatter.
+    MemCpyOMP(bucket_ptrs, cur_write_off, num_buckets + 1, tid, max_omp_threads);
+    using BufT= LocalWriteBuffer<T, uint32_t>;
+    auto bucket_write_buffers = (BufT *) malloc(num_buckets * sizeof(BufT));
     for (auto i = 0; i < num_buckets; i++) {
         bucket_write_buffers[i] = BufT(bucket_buffers + cap * i, cap, output, &cur_write_off[i]);
     }
 #pragma omp barrier
-    // Scatter.
 #pragma omp for
     for (size_t i = 0u; i < size; i++) {
         auto element = input[i];
@@ -237,7 +237,7 @@ void BucketSortSmallBuckets(vector<uint32_t> &histogram, T *&input, T *&output,
 #pragma omp barrier
 #pragma omp single
     {
-        if (timer != nullptr)log_info("[%s]: Before Sort, Time: %.9lfs", __FUNCTION__, timer->elapsed());
+        if (timer != nullptr)log_info("[%s]: Before Local Sort, Time: %.9lfs", __FUNCTION__, timer->elapsed());
     }
 
     free(bucket_buffers);

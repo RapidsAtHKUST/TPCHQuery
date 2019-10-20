@@ -90,7 +90,12 @@ int main(int argc, char *argv[]) {
         uint32_t max_order_date = 0;
         uint32_t min_order_date = UINT32_MAX;
         auto orders = (Order *) malloc(sizeof(Order) * MAX_NUM_ORDERS);
+        uint32_t *cur_write_off, *bucket_ptrs;
+        auto reordered_orders = (Order *) malloc(sizeof(Order) * MAX_NUM_ORDERS);
+        vector<uint32_t> histogram;
+
         volatile uint32_t size_of_orders = 0;
+        Timer timer;
         {
             FileLoader loader(order_path);
 #pragma omp parallel num_threads(io_threads)
@@ -106,6 +111,17 @@ int main(int argc, char *argv[]) {
                                max_order_date, min_order_date);
                 }
                 order_write_buffer.submit_if_possible();
+
+#pragma omp barrier
+#pragma omp single
+                {
+                    timer.reset();
+                }
+                int32_t num_buckets = max_order_date - min_order_date + 1;
+                BucketSortSmallBuckets(histogram, orders, reordered_orders, cur_write_off, bucket_ptrs,
+                                       size_of_orders, num_buckets, [orders, min_order_date](uint32_t it) {
+                            return orders[it].order_date_bucket - min_order_date;
+                        }, io_threads, &timer);
                 free(tmp);
                 free(local_buffer);
             }
@@ -118,6 +134,8 @@ int main(int argc, char *argv[]) {
         uint32_t max_ship_date = 0;
         uint32_t min_ship_date = UINT32_MAX;
         auto items = (LineItem *) malloc(sizeof(LineItem) * MAX_NUM_ITEMS);
+        auto reordered_items = (LineItem *) malloc(sizeof(LineItem) * MAX_NUM_ITEMS);
+        uint32_t *cur_write_off_item, *bucket_ptrs_item;
         volatile uint32_t size_of_items = 0;
         {
             FileLoader loader(line_item_path);
@@ -134,6 +152,18 @@ int main(int argc, char *argv[]) {
                                   max_ship_date, min_ship_date);
                 }
                 item_write_buffer.submit_if_possible();
+
+#pragma omp barrier
+#pragma omp single
+                {
+                    timer.reset();
+                }
+                int32_t num_buckets = max_ship_date - min_ship_date + 1;
+                BucketSortSmallBuckets(histogram, items, reordered_items,
+                                       cur_write_off_item, bucket_ptrs_item, size_of_items, num_buckets,
+                                       [items, min_ship_date](uint32_t it) {
+                                           return items[it].ship_date_bucket - min_ship_date;
+                                       }, io_threads, &timer);
                 free(tmp);
                 free(local_buffer);
             }
@@ -142,6 +172,7 @@ int main(int argc, char *argv[]) {
             loader.PrintEndStat();
         }
     }
+    log_info("Mem Usage: %d KB", getValue());
 
     if (customer_filter_option->is_set() && order_filter_option->is_set() && line_item_filter_option->is_set()) {
         log_info("Filter: %s, %s, %s", customer_filter_option.get()->value().c_str(),
