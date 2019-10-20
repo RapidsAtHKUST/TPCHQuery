@@ -3,11 +3,11 @@
 ## Input Format
 
 ```
-2019-10-19 10:48:53 INFO  (et: 0.016136 s) (func: ParseConsumer)  file_parser.h:110: FURNITURE
-2019-10-19 10:48:53 INFO  (et: 0.016309 s) (func: ParseConsumer)  file_parser.h:110: MACHINERY
-2019-10-19 10:48:53 INFO  (et: 0.016356 s) (func: ParseConsumer)  file_parser.h:110: AUTOMOBILE
-2019-10-19 10:48:53 INFO  (et: 0.016393 s) (func: ParseConsumer)  file_parser.h:110: BUILDING
-2019-10-19 10:48:53 INFO  (et: 0.016430 s) (func: ParseConsumer)  file_parser.h:110: HOUSEHOLD
+2019-10-19 10:48:53 INFO  (et: 0.016136 s) (func: ParseCustomer)  file_parser.h:110: FURNITURE
+2019-10-19 10:48:53 INFO  (et: 0.016309 s) (func: ParseCustomer)  file_parser.h:110: MACHINERY
+2019-10-19 10:48:53 INFO  (et: 0.016356 s) (func: ParseCustomer)  file_parser.h:110: AUTOMOBILE
+2019-10-19 10:48:53 INFO  (et: 0.016393 s) (func: ParseCustomer)  file_parser.h:110: BUILDING
+2019-10-19 10:48:53 INFO  (et: 0.016430 s) (func: ParseCustomer)  file_parser.h:110: HOUSEHOLD
 ```
 
 ```

@@ -11,6 +11,8 @@ using namespace std;
 using namespace popl;
 using namespace chrono;
 
+#define TLS_WRITE_BUFF_SIZE (1024 * 1024)
+
 int main(int argc, char *argv[]) {
     log_info("%.9lf", StrToFloat("1.3", 0, 3));
     OptionParser op("Allowed options");
@@ -32,32 +34,87 @@ int main(int argc, char *argv[]) {
         auto order_path = order_option.get()->value().c_str();
         auto line_item_path = line_item_option.get()->value().c_str();
 
+        auto io_threads = omp_get_max_threads();
 
-        auto io_threads = std::thread::hardware_concurrency();
+        // 1st: Init Customer List.
         int32_t max_id = INT32_MIN;
         int32_t min_id = INT32_MAX;
         LockFreeLinearTable lock_free_linear_table(1024);
+        auto customers = (Customer *) malloc(sizeof(Customer) * MAX_NUM_CUSTOMERS);
+        uint32_t size_of_customers = 0;
         {
             FileLoader loader(customer_path);
-            size_t num_rows = 0;
-#pragma omp parallel num_threads(io_threads) reduction(+:num_rows) reduction(max:max_id), reduction(min:min_id)
+#pragma omp parallel num_threads(io_threads) reduction(max:max_id), reduction(min:min_id)
             {
+                uint32_t buf_cap = TLS_WRITE_BUFF_SIZE;
+                auto *local_buffer = (Customer *) malloc(sizeof(Customer) * buf_cap);
+                ConsumerBuffer customer_write_buffer(local_buffer, buf_cap, customers, &size_of_customers);
                 char *tmp = (char *) malloc(IO_REQ_SIZE * sizeof(char));
 #pragma omp for
                 for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
                     ssize_t num_reads = loader.ReadToBuf(i, tmp);
-                    num_rows += ParseConsumer({.buf_= tmp, .size_= num_reads}, lock_free_linear_table,
-                                              max_id, min_id);
+                    ParseCustomer({.buf_= tmp, .size_= num_reads}, lock_free_linear_table,
+                                  customer_write_buffer, max_id, min_id);
                 }
+                customer_write_buffer.submit_if_possible();
+
                 free(tmp);
+                free(local_buffer);
             }
-            log_info("Finish IO, #Rows: %zu, Min-Max: %d, %d", num_rows, min_id, max_id);
+            log_info("Finish IO, #Rows: %zu, Min-Max: %d, %d", size_of_customers, min_id, max_id);
             loader.PrintEndStat();
         }
         lock_free_linear_table.PrintTable();
-        ParseFilePRead(order_path, ParseOrder);
-        ParseFilePRead(line_item_path, ParseLineItem);
+
+        // 2nd: Init Order List.
+        auto orders = (Order *) malloc(sizeof(Order) * MAX_NUM_ORDERS);
+        uint32_t size_of_orders = 0;
+        {
+            FileLoader loader(order_path);
+#pragma omp parallel num_threads(io_threads)
+            {
+                uint32_t buf_cap = TLS_WRITE_BUFF_SIZE;
+                auto *local_buffer = (Order *) malloc(sizeof(Order) * buf_cap);
+                OrderBuffer order_write_buffer(local_buffer, buf_cap, orders, &size_of_orders);
+                char *tmp = (char *) malloc(IO_REQ_SIZE * sizeof(char));
+#pragma omp for
+                for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
+                    ssize_t num_reads = loader.ReadToBuf(i, tmp);
+                    ParseOrder({.buf_= tmp, .size_= num_reads}, order_write_buffer);
+                }
+                order_write_buffer.submit_if_possible();
+                free(tmp);
+                free(local_buffer);
+            }
+            log_info("Finish IO, #Rows: %zu, Min-Max: %d, %d", size_of_orders, min_id, max_id);
+            loader.PrintEndStat();
+        }
+
+        // 3rd: Init LineItem List.
+        auto items = (LineItem *) malloc(sizeof(LineItem) * MAX_NUM_ITEMS);
+        uint32_t size_of_items = 0;
+        {
+            FileLoader loader(line_item_path);
+#pragma omp parallel num_threads(io_threads)
+            {
+                uint32_t buf_cap = TLS_WRITE_BUFF_SIZE;
+                auto *local_buffer = (LineItem *) malloc(sizeof(LineItem) * buf_cap);
+                LineItemBuffer item_write_buffer(local_buffer, buf_cap, items, &size_of_items);
+                char *tmp = (char *) malloc(IO_REQ_SIZE * sizeof(char));
+#pragma omp for
+                for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
+                    ssize_t num_reads = loader.ReadToBuf(i, tmp);
+                    ParseLineItem({.buf_= tmp, .size_= num_reads}, item_write_buffer);
+                }
+                item_write_buffer.submit_if_possible();
+                free(tmp);
+                free(local_buffer);
+            }
+            log_info("Finish IO, #Rows: %zu, Min-Max: %d, %d", size_of_items, min_id, max_id);
+            loader.PrintEndStat();
+        }
     }
+
     if (customer_filter_option->is_set() && order_filter_option->is_set() && line_item_filter_option->is_set()) {
         log_info("Filter: %s, %s, %s", customer_filter_option.get()->value().c_str(),
                  order_filter_option.get()->value().c_str(), line_item_filter_option.get()->value().c_str());

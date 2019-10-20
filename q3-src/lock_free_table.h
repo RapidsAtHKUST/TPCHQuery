@@ -12,7 +12,7 @@ struct String {
     int16_t size;
     char chars[CUSTOMER_CATEGORY_LEN];
 
-    void PrintStr(){
+    void PrintStr() {
         log_info("%.*s", size, chars);
     }
 };
