@@ -76,7 +76,8 @@ inline void ParseCustomer(ParsingTask task, LockFreeLinearTable &table, Consumer
     }
 }
 
-inline void ParseOrder(ParsingTask task, OrderBuffer &local_write_buffer) {
+inline void ParseOrder(ParsingTask task, OrderBuffer &local_write_buffer,
+                       uint32_t &max_date, uint32_t &min_date) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
 
@@ -112,12 +113,15 @@ inline void ParseOrder(ParsingTask task, OrderBuffer &local_write_buffer) {
         if (end >= task.size_)return;
         uint32_t order_date = ConvertDateToBucketID(buf + i);
         i = end + 1;
+        max_date = max(max_date, order_date);
+        min_date = min(min_date, order_date);
         assert(order_date > 0);
         local_write_buffer.push({.key=id, .customer_key=cid, .order_date_bucket = order_date});
     }
 }
 
-inline void ParseLineItem(ParsingTask task, LineItemBuffer &local_write_buffer) {
+inline void ParseLineItem(ParsingTask task, LineItemBuffer &local_write_buffer,
+                          uint32_t &max_date, uint32_t &min_date) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
     while (i < task.size_) {
@@ -153,6 +157,8 @@ inline void ParseLineItem(ParsingTask task, LineItemBuffer &local_write_buffer) 
         uint32_t ship_date = ConvertDateToBucketID(buf + i);
         i = end + 1;
         assert(ship_date > 0);
+        max_date = max(max_date, ship_date);
+        min_date = min(min_date, ship_date);
         local_write_buffer.push({.order_key = id, .ship_date_bucket=ship_date, .price = price,});
     }
 }

@@ -61,4 +61,8 @@ public:
             strs[probe].PrintStr();
         }
     }
+
+    void PrintSlot(int i){
+        strs[i].PrintStr();
+    }
 };
