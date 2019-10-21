@@ -50,17 +50,19 @@ int main(int argc, char *argv[]) {
         // Query Top K, Given Three Filters.
         if (customer_filter_option->is_set() && order_filter_option->is_set() && line_item_filter_option->is_set()
             && limit_option->is_set()) {
-            log_info("Filter: %s, %s, %s", customer_filter_option.get()->value().c_str(),
-                     order_filter_option.get()->value().c_str(), line_item_filter_option.get()->value().c_str());
+            string category = customer_filter_option.get()->value();
+            string order_date = order_filter_option.get()->value();
+            string ship_date = line_item_filter_option.get()->value();
+            log_info("Filter: %s, %s, %s; Limit: %d", category.c_str(), order_date.c_str(), ship_date.c_str(),
+                     limit_option.get()->value());
+#ifdef DEBUG
             const char *date = order_filter_option.get()->value().c_str();
-            char date2[11];
-            date2[10] = '\0';
-
-            log_info("%d", ConvertDateToBucketID(date));
+            char date2[DATE_LEN];
+            log_info("%d, %d", ConvertDateToBucketID(order_date.c_str()), ConvertDateToBucketID(ship_date.c_str()));
             ConvertBucketIDToDate(date2, ConvertDateToBucketID(date));
-            log_info("%s", date2);
-
-            log_info("Limit: %d", limit_option.get()->value());
+            log_info("%.*s", DATE_LEN, date2);
+#endif
+            index_helper.Query(category, order_date, ship_date);
         }
     }
     log_info("Mem Usage: %d KB", getValue());

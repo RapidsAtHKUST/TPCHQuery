@@ -41,11 +41,13 @@ class IndexHelper {
     uint32_t size_of_items_ = 0;
 
     // Item CSR.
-    vector<uint32_t> bucket_ptrs_item_;
+    vector<uint32_t> item_bucket_ptrs_;
     int32_t *item_order_keys_ = nullptr;
     double *item_prices_ = nullptr;
 public:
     IndexHelper(string order_path, string line_item_path);
+
+    void Query(string category, string order_date, string ship_date);
 };
 
 class FileInputHelper {
@@ -53,7 +55,7 @@ class FileInputHelper {
     size_t io_threads;
 
     // Customer.
-    int32_t *customer_categories_;
+    int32_t *customer_categories_ = nullptr;
     LockFreeLinearTable lock_free_linear_table_;
 
     // Order.
@@ -70,9 +72,7 @@ class FileInputHelper {
     volatile uint32_t size_of_items_ = 0;
     uint32_t *bucket_ptrs_item_ = nullptr;
 public:
-    explicit FileInputHelper(size_t io_threads) : io_threads(io_threads), customer_categories_(nullptr),
-                                                  lock_free_linear_table_(1024) {
-    }
+    explicit FileInputHelper(size_t io_threads) : io_threads(io_threads), lock_free_linear_table_(1024) {}
 
     void ParseCustomerInputFile(const char *customer_path);
 

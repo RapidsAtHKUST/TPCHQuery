@@ -313,13 +313,90 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
     {
         ifstream ifs(item_meta_path, std::ifstream::in);
         Archive<ifstream> ar(ifs);
-        ar >> min_ship_date_ >> max_ship_date_ >> item_num_buckets_ >> bucket_ptrs_item_;
+        ar >> min_ship_date_ >> max_ship_date_ >> item_num_buckets_ >> item_bucket_ptrs_;
     }
-    size_of_items_ = bucket_ptrs_item_.back();
-    log_info("%d, %d, %d, %zu, %d", min_ship_date_, max_ship_date_, item_num_buckets_, bucket_ptrs_item_.size(),
+    size_of_items_ = item_bucket_ptrs_.back();
+    log_info("%d, %d, %d, %zu, %d", min_ship_date_, max_ship_date_, item_num_buckets_, item_bucket_ptrs_.size(),
              size_of_items_);
     item_order_keys_ = GetMMAPArrReadOnly<int32_t>(item_order_id_path.c_str(), fd, size_of_items_);
     item_prices_ = GetMMAPArrReadOnly<double>(item_price_path.c_str(), fd, size_of_items_);
     log_info("Finish LineItem Loading...Not Populate Yet");
 
+}
+
+void IndexHelper::Query(string category, string order_date, string ship_date) {
+    uint32_t o_date = ConvertDateToBucketID(order_date.c_str());
+    uint32_t s_date = ConvertDateToBucketID(ship_date.c_str());
+    int category_id = LinearProbe(category_table_, category.c_str(), 0, category.size());
+    log_info("%d, %.*s, [%d, %d), [%d, %d)", category_id, category_table_[category_id].size,
+             category_table_[category_id].chars,
+             min_order_date_, o_date, s_date + 1, max_ship_date_ + 1);
+    // Exclusive "< o_date", "> s_date".
+    if (o_date <= min_order_date_ || s_date >= max_ship_date_) {
+        return;
+    }
+    uint32_t o_bucket_beg = category_id * order_second_level_range_ + 0;
+    uint32_t o_bucket_end = category_id * order_second_level_range_ +
+                            (min(o_date, max_order_date_ + 1) - min_order_date_);
+
+    uint32_t item_bucket_beg = max(s_date + 1, min_ship_date_) - min_ship_date_;
+    uint32_t item_bucket_end = item_num_buckets_;
+    log_info("Order Bucket Range: [%d, %d); Item Bucket Range: [%d, %d)",
+             o_bucket_beg, o_bucket_end, item_bucket_beg, item_bucket_end);
+    auto order_array_view_size = order_bucket_ptrs_[o_bucket_end] - order_bucket_ptrs_[o_bucket_beg];
+    auto item_array_view_size = item_bucket_ptrs_[item_bucket_end] - item_bucket_ptrs_[item_bucket_beg];
+    log_info("[%d, %d): %d, [%d, %d): %d", order_bucket_ptrs_[o_bucket_beg], order_bucket_ptrs_[o_bucket_end],
+             order_array_view_size, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
+             item_array_view_size);
+    // Join & Aggregate.
+    auto acc_prices = (double *) malloc(sizeof(double) * order_array_view_size);
+    uint32_t *order_pos_dict;
+    bool *bmp;
+    size_t non_zeros = 0;
+    log_info("%d", order_keys_[order_bucket_ptrs_[o_bucket_beg]]);
+    int32_t max_order_id = 0;
+#pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        int num_threads = omp_get_num_threads();
+        MemSetOMP(acc_prices, 0, order_array_view_size, tid, num_threads);
+#pragma omp for
+        for (size_t i = 0; i < order_array_view_size; i++) {
+            assert(acc_prices[i] == 0);
+        }
+#pragma omp for reduction(max:max_order_id)
+        for (size_t i = order_bucket_ptrs_[o_bucket_beg]; i < order_bucket_ptrs_[o_bucket_end]; i++) {
+            max_order_id = max(max_order_id, order_keys_[i]);
+        }
+#pragma omp single
+        {
+            log_info("BMP Size: %d", max_order_id + 1);
+            bmp = (bool *) malloc(sizeof(bool) * (max_order_id + 1));
+            order_pos_dict = (uint32_t *) malloc(sizeof(uint32_t) * (max_order_id + 1));
+        }
+        MemSetOMP(bmp, 0, (max_order_id + 1), tid, num_threads);
+#pragma omp for
+        for (auto i = order_bucket_ptrs_[o_bucket_beg]; i < order_bucket_ptrs_[o_bucket_end]; i++) {
+            auto order_key = order_keys_[i];
+            bmp[order_key] = true;
+            order_pos_dict[order_key] = i - order_bucket_ptrs_[o_bucket_beg];
+        }
+#pragma omp for
+        for (size_t i = item_bucket_ptrs_[item_bucket_beg]; i < item_bucket_ptrs_[item_bucket_end]; i++) {
+            auto order_key = item_order_keys_[i];
+            if (bmp[order_key]) {
+                acc_prices[order_pos_dict[order_key]] += item_prices_[i];
+            }
+        }
+#pragma omp for reduction(+:non_zeros)
+        for (size_t i = 0; i < order_array_view_size; i++) {
+            if (acc_prices[i] != 0) {
+                non_zeros++;
+            }
+        }
+    }
+    free(order_pos_dict);
+    free(bmp);
+    log_info("Non Zeros: %zu", non_zeros);
+    // Select & Sort & Return Top (min(K, #results)).
 }
