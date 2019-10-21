@@ -430,13 +430,13 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
         return l.price > r.price;
     }, omp_get_max_threads());
 #endif
-    log_info("l_orderkey|o_orderdate|revenue");
+    printf("l_orderkey|o_orderdate|revenue\n");
     for (auto i = 0; i < min<int32_t>(size_of_results, limit); i++) {
         char date[DATE_LEN + 1];
         date[DATE_LEN] = '\0';
         ConvertBucketIDToDate(date, order_dates_[results[i].order_offset]);
-        log_info("%d|%s|%.2lf",
-                 order_keys_[results[i].order_offset], date, results[i].price);
+        printf("%d|%s|%.2lf\n",
+               order_keys_[results[i].order_offset], date, results[i].price);
     }
     log_info("Query Time: %.6lfs", timer.elapsed());
 }

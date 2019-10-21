@@ -1,7 +1,9 @@
 #pragma once
 
-#include <vector>
 #include <cstdint>
+#include <cstring>
+
+#include <vector>
 
 #include <omp.h>
 

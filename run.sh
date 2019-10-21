@@ -1,0 +1,1 @@
+./tpch-q3-submit "$@"

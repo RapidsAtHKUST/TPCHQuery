@@ -9,7 +9,11 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
 add_compile_options(-Wall -O3 -g -march=native)
-add_definitions(-DUSE_LOG)
+
+option(ENABLE_LOG "enable log" ON)
+if (ENABLE_LOG)
+    add_definitions(-DUSE_LOG)
+endif ()
 
 find_package(OpenMP)
 if (OPENMP_FOUND)
@@ -18,6 +22,9 @@ if (OPENMP_FOUND)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 endif ()
 
-add_executable(tpch-q3 tpch_q3_main.cpp util/log.cpp file_input_indexing.cpp)
+#add_executable(tpch-q3 tpch_q3_main.cpp util/log.cpp file_input_indexing.cpp)
 add_executable(tpch-q3-submit tpch_q3_main_submit.cpp util/log.cpp file_input_indexing.cpp)
+
+install(TARGETS tpch-q3-submit DESTINATION .)
+
 

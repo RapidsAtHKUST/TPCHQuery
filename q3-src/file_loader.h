@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 #include "util/primitives/primitives.h"
 #include "util/timer.h"
 #include "util/util.h"
