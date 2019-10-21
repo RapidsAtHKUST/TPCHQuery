@@ -9,6 +9,7 @@
 
 #include "file_loader.h"
 #include "util/pretty_print.h"
+#include "util/primitives/parasort_cmp.h"
 
 #define TLS_WRITE_BUFF_SIZE (1024 * 1024)
 
@@ -364,6 +365,7 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
     int32_t max_order_id = 0;
     vector<uint32_t> histogram;
 
+    Timer timer;
 #pragma omp parallel
     {
         int tid = omp_get_thread_num();
@@ -384,12 +386,16 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
             order_pos_dict = (uint32_t *) malloc(sizeof(uint32_t) * (max_order_id + 1));
         }
         MemSetOMP(bmp, 0, (max_order_id + 1), tid, num_threads);
+#pragma omp single
+        log_info("Before Construction Data Structures: %.6lfs", timer.elapsed());
 #pragma omp for
         for (auto i = order_bucket_ptrs_[o_bucket_beg]; i < order_bucket_ptrs_[o_bucket_end]; i++) {
             auto order_key = order_keys_[i];
             bmp[order_key] = true;
             order_pos_dict[order_key] = i - order_bucket_ptrs_[o_bucket_beg];
         }
+#pragma omp single
+        log_info("Before Aggregation: %.6lfs", timer.elapsed());
 #pragma omp for
         for (size_t i = item_bucket_ptrs_[item_bucket_beg]; i < item_bucket_ptrs_[item_bucket_end]; i++) {
             auto order_key = item_order_keys_[i];
@@ -397,7 +403,8 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
                 acc_prices[order_pos_dict[order_key]] += item_prices_[i];
             }
         }
-
+#pragma omp single
+        log_info("Before Select: %.6lfs", timer.elapsed());
         FlagPrefixSumOMP(histogram, relative_off, order_array_view_size, [acc_prices](uint32_t it) {
             return acc_prices[it] == 0;
         }, num_threads);
@@ -414,9 +421,15 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
     free(bmp);
     log_info("Non Zeros: %zu", size_of_results);
     // Select & Sort & Return Top (min(K, #results)).
+#ifdef BASELINE_SORT
     sort(results, results + size_of_results, [](Result l, Result r) {
         return l.price > r.price;
     });
+#else
+    parasort(size_of_results, results, [](Result l, Result r) {
+        return l.price > r.price;
+    }, omp_get_max_threads());
+#endif
     log_info("l_orderkey|o_orderdate|revenue");
     for (auto i = 0; i < min<int32_t>(size_of_results, limit); i++) {
         char date[DATE_LEN + 1];
@@ -425,4 +438,5 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
         log_info("%d|%s|%.2lf",
                  order_keys_[results[i].order_offset], date, results[i].price);
     }
+    log_info("Query Time: %.6lfs", timer.elapsed());
 }
