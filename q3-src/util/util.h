@@ -41,6 +41,12 @@ inline size_t file_size(const char *file_name) {
     return size;
 }
 
+// utility function
+inline bool file_exists(const std::string name) {
+    struct stat buffer;
+    return (stat(name.c_str(), &buffer) == 0);
+}
+
 inline int parseLine(char *line) {
     // This assumes that a digit will be found and the line ends in " Kb".
     int i = strlen(line);
