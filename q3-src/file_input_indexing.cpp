@@ -324,7 +324,12 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
 
 }
 
-void IndexHelper::Query(string category, string order_date, string ship_date) {
+struct Result {
+    uint32_t order_offset;
+    double price;
+};
+
+void IndexHelper::Query(string category, string order_date, string ship_date, int limit) {
     uint32_t o_date = ConvertDateToBucketID(order_date.c_str());
     uint32_t s_date = ConvertDateToBucketID(ship_date.c_str());
     int category_id = LinearProbe(category_table_, category.c_str(), 0, category.size());
@@ -350,11 +355,15 @@ void IndexHelper::Query(string category, string order_date, string ship_date) {
              item_array_view_size);
     // Join & Aggregate.
     auto acc_prices = (double *) malloc(sizeof(double) * order_array_view_size);
+    auto relative_off = (uint32_t *) malloc(sizeof(uint32_t) * order_array_view_size);
+    auto results = (Result *) malloc(sizeof(Result) * order_array_view_size);
     uint32_t *order_pos_dict;
     bool *bmp;
-    size_t non_zeros = 0;
+    int32_t size_of_results = 0;
     log_info("%d", order_keys_[order_bucket_ptrs_[o_bucket_beg]]);
     int32_t max_order_id = 0;
+    vector<uint32_t> histogram;
+
 #pragma omp parallel
     {
         int tid = omp_get_thread_num();
@@ -388,15 +397,32 @@ void IndexHelper::Query(string category, string order_date, string ship_date) {
                 acc_prices[order_pos_dict[order_key]] += item_prices_[i];
             }
         }
-#pragma omp for reduction(+:non_zeros)
-        for (size_t i = 0; i < order_array_view_size; i++) {
+
+        FlagPrefixSumOMP(histogram, relative_off, order_array_view_size, [acc_prices](uint32_t it) {
+            return acc_prices[it] == 0;
+        }, num_threads);
+#pragma omp for reduction(+:size_of_results)
+        for (uint32_t i = 0u; i < order_array_view_size; i++) {
             if (acc_prices[i] != 0) {
-                non_zeros++;
+                size_of_results++;
+                auto off = i - relative_off[i];
+                results[off] = {.order_offset=i + order_bucket_ptrs_[o_bucket_beg], .price= acc_prices[i]};
             }
         }
     }
     free(order_pos_dict);
     free(bmp);
-    log_info("Non Zeros: %zu", non_zeros);
+    log_info("Non Zeros: %zu", size_of_results);
     // Select & Sort & Return Top (min(K, #results)).
+    sort(results, results + size_of_results, [](Result l, Result r) {
+        return l.price > r.price;
+    });
+    log_info("l_orderkey|o_orderdate|revenue");
+    for (auto i = 0; i < min<int32_t>(size_of_results, limit); i++) {
+        char date[DATE_LEN + 1];
+        date[DATE_LEN] = '\0';
+        ConvertBucketIDToDate(date, order_dates_[results[i].order_offset]);
+        log_info("%d|%s|%.2lf",
+                 order_keys_[results[i].order_offset], date, results[i].price);
+    }
 }

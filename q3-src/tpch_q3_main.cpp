@@ -53,8 +53,9 @@ int main(int argc, char *argv[]) {
             string category = customer_filter_option.get()->value();
             string order_date = order_filter_option.get()->value();
             string ship_date = line_item_filter_option.get()->value();
+            int limit = limit_option.get()->value();
             log_info("Filter: %s, %s, %s; Limit: %d", category.c_str(), order_date.c_str(), ship_date.c_str(),
-                     limit_option.get()->value());
+                     limit);
 #ifdef DEBUG
             const char *date = order_filter_option.get()->value().c_str();
             char date2[DATE_LEN];
@@ -62,7 +63,7 @@ int main(int argc, char *argv[]) {
             ConvertBucketIDToDate(date2, ConvertDateToBucketID(date));
             log_info("%.*s", DATE_LEN, date2);
 #endif
-            index_helper.Query(category, order_date, ship_date);
+            index_helper.Query(category, order_date, ship_date, limit);
         }
     }
     log_info("Mem Usage: %d KB", getValue());

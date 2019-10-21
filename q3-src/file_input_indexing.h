@@ -47,7 +47,7 @@ class IndexHelper {
 public:
     IndexHelper(string order_path, string line_item_path);
 
-    void Query(string category, string order_date, string ship_date);
+    void Query(string category, string order_date, string ship_date, int limit);
 };
 
 class FileInputHelper {
