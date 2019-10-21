@@ -15,13 +15,25 @@ template<typename T>
 T *GetMMAPArr(const char *file_name, int &file_fd, size_t arr_size) {
     Timer populate_timer;
     file_fd = open(file_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
-    auto file_size = arr_size * sizeof(T);
+    size_t file_size = arr_size * sizeof(T);
     auto ret = ftruncate(file_fd, file_size);
 
     auto mmap_arr_ = (T *) mmap(nullptr, file_size, PROT_WRITE, MAP_SHARED, file_fd, 0);
 //    auto mmap_arr_ = (T *) mmap(nullptr, file_size, PROT_WRITE, MAP_SHARED | MAP_POPULATE, file_fd, 0);
     log_info("Open & MMAP Time: %.6lfs", populate_timer.elapsed());
     assert(ret == 0);
+    return mmap_arr_;
+}
+
+template<typename T>
+T *GetMMAPArrReadOnly(const char *file_name, int &file_fd, size_t arr_size) {
+    Timer populate_timer;
+    file_fd = open(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
+    size_t file_size = arr_size * sizeof(T);
+    assert(file_fd >= 0);
+
+    auto mmap_arr_ = (T *) mmap(nullptr, file_size, PROT_READ, MAP_PRIVATE, file_fd, 0);
+    log_info("Open & MMAP Time: %.6lfs", populate_timer.elapsed());
     return mmap_arr_;
 }
 

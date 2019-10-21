@@ -49,21 +49,23 @@ int main(int argc, char *argv[]) {
         // 3rd: Init LineItem List.
         file_input_helper.ParseLineItemInputFile(line_item_path);
         file_input_helper.WriteLineItemIndexToFile(line_item_path);
+
+        IndexHelper index_helper(order_path, line_item_path);
+        // Query Top K, Given Three Filters.
+        if (customer_filter_option->is_set() && order_filter_option->is_set() && line_item_filter_option->is_set()
+            && limit_option->is_set()) {
+            log_info("Filter: %s, %s, %s", customer_filter_option.get()->value().c_str(),
+                     order_filter_option.get()->value().c_str(), line_item_filter_option.get()->value().c_str());
+            const char *date = order_filter_option.get()->value().c_str();
+            char date2[11];
+            date2[10] = '\0';
+
+            log_info("%d", ConvertDateToBucketID(date));
+            ConvertBucketIDToDate(date2, ConvertDateToBucketID(date));
+            log_info("%s", date2);
+
+            log_info("Limit: %d", limit_option.get()->value());
+        }
     }
     log_info("Mem Usage: %d KB", getValue());
-
-    if (customer_filter_option->is_set() && order_filter_option->is_set() && line_item_filter_option->is_set()) {
-        log_info("Filter: %s, %s, %s", customer_filter_option.get()->value().c_str(),
-                 order_filter_option.get()->value().c_str(), line_item_filter_option.get()->value().c_str());
-        const char *date = order_filter_option.get()->value().c_str();
-        char date2[11];
-        date2[10] = '\0';
-
-        log_info("%d", ConvertDateToBucketID(date));
-        ConvertUint32ToDate(date2, ConvertDateToUint32(date));
-        log_info("%s", date2);
-    }
-    if (limit_option->is_set()) {
-        log_info("Limit: %d", limit_option.get()->value());
-    }
 }

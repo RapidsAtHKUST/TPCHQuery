@@ -3,10 +3,12 @@
 //
 
 #include "file_input_indexing.h"
-#include "file_loader.h"
 
 #include <string>
 #include <fstream>
+
+#include "file_loader.h"
+#include "util/pretty_print.h"
 
 #define TLS_WRITE_BUFF_SIZE (1024 * 1024)
 
@@ -102,7 +104,7 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
                 timer.reset();
             }
 #pragma omp for
-            for (auto i = 0; i < size_of_orders; i++) {
+            for (size_t i = 0; i < size_of_orders; i++) {
                 auto &order = orders[i];
                 order.customer_key = customer_categories_[order.customer_key];
             }
@@ -173,6 +175,10 @@ void FileInputHelper::WriteOrderIndexToFIle(const char *order_path) {
     }
     log_info("Write Time: %.9lfs, TPS: %.3lf G/s", write_timer.elapsed(),
              sizeof(int32_t) * (size_of_orders) * 2 / write_timer.elapsed() / pow(10, 9));
+#ifdef M_UNMAP
+    munmap(key_output, size_of_orders * sizeof(int32_t));
+    munmap(date_output, size_of_orders * sizeof(uint32_t));
+#endif
     free(reordered_orders_);
 }
 
@@ -263,9 +269,57 @@ void FileInputHelper::WriteLineItemIndexToFile(const char *line_item_path) {
             lt_price_output[i] = reordered_items_[i].price;
         }
     }
+#ifdef M_UNMAP
+    munmap(lt_order_id_output, size_of_items_ * sizeof(int32_t));
+    munmap(lt_price_output, size_of_items_ * sizeof(double));
+#endif
     free(reordered_items_);
     log_info("Write Time: %.9lfs, TPS: %.3lf G/s", write_timer.elapsed(),
              (sizeof(int32_t) + sizeof(double)) * (size_of_items_) / write_timer.elapsed() / pow(10, 9));
 }
 
 
+IndexHelper::IndexHelper(string order_path, string line_item_path) {
+    // Load Order.
+    string order_key_path = order_path + ORDER_KEY_BIN_FILE_SUFFIX;
+    string order_date_path = order_path + ORDER_DATE_BIN_FILE_SUFFIX;
+    string order_meta_path = order_path + ORDER_META_BIN_FILE_SUFFIX;
+    {
+        ifstream ifs(order_meta_path, std::ifstream::in);
+        Archive<ifstream> ar(ifs);
+
+        const char *test_chars = "BUILDING";
+        ar >> category_table_ >> min_order_date_ >> max_order_date_
+           >> order_second_level_range_ >> order_num_buckets_ >> order_bucket_ptrs_;
+        log_info("Probe Test: %d", LinearProbe(category_table_, test_chars, 0, strlen(test_chars)));
+    }
+    for (auto &category: category_table_) {
+        category.PrintStr();
+    }
+    size_of_orders_ = order_bucket_ptrs_.back();
+    num_categories_ = category_table_.size();
+    log_info("%d, %d, %d, %d, %d, %zu, %d", num_categories_, min_order_date_, max_order_date_,
+             order_second_level_range_, order_num_buckets_, order_bucket_ptrs_.size(), size_of_orders_);
+//    cout << order_bucket_ptrs_ << endl;
+    int fd;
+    order_keys_ = GetMMAPArrReadOnly<int32_t>(order_key_path.c_str(), fd, size_of_orders_);
+    order_dates_ = GetMMAPArrReadOnly<uint32_t>(order_date_path.c_str(), fd, size_of_orders_);
+    log_info("Finish Order Index Loading...Not Populate Yet");
+
+    // Load LineItem.
+    string item_order_id_path = line_item_path + LINE_ITEM_ORDER_KEY_FILE_SUFFIX;
+    string item_price_path = line_item_path + LINE_ITEM_PRICE_FILE_SUFFIX;
+    string item_meta_path = line_item_path + LINE_ITEM_META_BIN_FILE_SUFFIX;
+    {
+        ifstream ifs(item_meta_path, std::ifstream::in);
+        Archive<ifstream> ar(ifs);
+        ar >> min_ship_date_ >> max_ship_date_ >> item_num_buckets_ >> bucket_ptrs_item_;
+    }
+    size_of_items_ = bucket_ptrs_item_.back();
+    log_info("%d, %d, %d, %zu, %d", min_ship_date_, max_ship_date_, item_num_buckets_, bucket_ptrs_item_.size(),
+             size_of_items_);
+    item_order_keys_ = GetMMAPArrReadOnly<int32_t>(item_order_id_path.c_str(), fd, size_of_items_);
+    item_prices_ = GetMMAPArrReadOnly<double>(item_price_path.c_str(), fd, size_of_items_);
+    log_info("Finish LineItem Loading...Not Populate Yet");
+
+}
