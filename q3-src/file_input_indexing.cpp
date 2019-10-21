@@ -28,7 +28,7 @@ void FileInputHelper::ParseCustomerInputFile(const char *customer_path) {
 #pragma omp for reduction(max:max_id), reduction(min:min_id)
             for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
                 ssize_t num_reads = loader.ReadToBuf(i, tmp);
-                ParseCustomer({.buf_= tmp, .size_= num_reads}, lock_free_linear_table,
+                ParseCustomer({.buf_= tmp, .size_= num_reads}, lock_free_linear_table_,
                               customer_write_buffer, max_id, min_id);
             }
             customer_write_buffer.submit_if_possible();
@@ -36,12 +36,12 @@ void FileInputHelper::ParseCustomerInputFile(const char *customer_path) {
             // may have uninitialized garbage slots, but it is okay.
 #pragma omp single
             {
-                customer_categories = (int32_t *) malloc(sizeof(int32_t) * (max_id + 1));
+                customer_categories_ = (int32_t *) malloc(sizeof(int32_t) * (max_id + 1));
             }
 #pragma omp for
             for (size_t i = 0; i < size_of_customers; i++) {
                 Customer customer = customers[i];
-                customer_categories[customer.key] = customer.category;
+                customer_categories_[customer.key] = customer.category;
             }
             free(tmp);
             free(local_buffer);
@@ -49,7 +49,7 @@ void FileInputHelper::ParseCustomerInputFile(const char *customer_path) {
 #ifdef DEBUG
         log_info("Beg ... [1, 11] customer categories...");
         for (auto i = 1; i < 11; i++)
-            lock_free_linear_table.PrintSlot(customer_categories[i]);
+            lock_free_linear_table_.PrintSlot(customer_categories_[i]);
         log_info("End ... [1, 11] customer categories...");
 #endif
         log_info("Finish IO, #Rows: %zu, Min-Max: [%d, %d], Range: %d", size_of_customers, min_id, max_id,
@@ -58,18 +58,16 @@ void FileInputHelper::ParseCustomerInputFile(const char *customer_path) {
     }
     // Free Customers.
     free(customers);
-    lock_free_linear_table.PrintTable();
+    lock_free_linear_table_.PrintTable();
 }
 
 void FileInputHelper::ParseOrderInputFile(const char *order_path) {
+    auto orders = (Order *) malloc(sizeof(Order) * MAX_NUM_ORDERS);
+    reordered_orders_ = (Order *) malloc(sizeof(Order) * MAX_NUM_ORDERS);
+    vector<uint32_t> histogram;
+    uint32_t *cur_write_off = nullptr;
     uint32_t max_order_date = 0;
     uint32_t min_order_date = UINT32_MAX;
-    auto orders = (Order *) malloc(sizeof(Order) * MAX_NUM_ORDERS);
-    uint32_t *cur_write_off, *bucket_ptrs;
-    auto reordered_orders = (Order *) malloc(sizeof(Order) * MAX_NUM_ORDERS);
-    vector<uint32_t> histogram;
-
-    volatile uint32_t size_of_orders = 0;
     Timer timer;
     {
 #ifdef FILE_LOAD_PREAD
@@ -106,33 +104,38 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
 #pragma omp for
             for (auto i = 0; i < size_of_orders; i++) {
                 auto &order = orders[i];
-                order.customer_key = customer_categories[order.customer_key];
+                order.customer_key = customer_categories_[order.customer_key];
             }
 #pragma omp single
             {
-                free(customer_categories);
+                free(customer_categories_);
             }
             int32_t second_level_range = max_order_date - min_order_date + 1;
-            int32_t num_buckets = second_level_range * lock_free_linear_table.Size();
-            BucketSortSmallBuckets(histogram, orders, reordered_orders, cur_write_off, bucket_ptrs,
+            int32_t num_buckets = second_level_range * lock_free_linear_table_.Size();
+            BucketSortSmallBuckets(histogram, orders, reordered_orders_, cur_write_off, order_bucket_ptrs_,
                                    size_of_orders, num_buckets,
                                    [orders, min_order_date, second_level_range](uint32_t it) {
                                        Order order = orders[it];
                                        return order.customer_key * second_level_range
                                               + order.order_date_bucket - min_order_date;
                                    }, io_threads, &timer);
-            assert(bucket_ptrs[num_buckets] == MAX_NUM_ORDERS);
+            assert(order_bucket_ptrs_[num_buckets] == MAX_NUM_ORDERS);
             free(local_buf);
             free(local_buffer);
         }
-        log_info("Finish IO, #Rows: %zu, Min-Max: [%d, %d], Range: %d", size_of_orders, min_order_date,
-                 max_order_date, max_order_date - min_order_date + 1);
+        max_order_date_ = max_order_date;
+        min_order_date_ = min_order_date;
+        log_info("Finish IO, #Rows: %zu, Min-Max: [%d, %d], Range: %d", size_of_orders, min_order_date_,
+                 max_order_date_, max_order_date_ - min_order_date_ + 1);
         loader.PrintEndStat();
     }
+    free(cur_write_off);
+    free(orders);
+}
 
+void FileInputHelper::WriteOrderIndexToFIle(const char *order_path) {
     // Free Orders, Saving Order Index.
     Timer write_timer;
-    free(orders);
     string prefix = order_path;
     string order_key_path = prefix + ORDER_KEY_BIN_FILE_SUFFIX;
     string order_date_path = prefix + ORDER_DATE_BIN_FILE_SUFFIX;
@@ -140,18 +143,18 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
     {
         ofstream ofs(order_meta_path, std::ofstream::out);
         Archive<ofstream> ar(ofs);
-        auto category_table = lock_free_linear_table.GetTable();
+        auto category_table = lock_free_linear_table_.GetTable();
         for (auto e: category_table) {
             e.PrintStr();
         }
         const char *test_chars = "BUILDING";
         log_info("Probe Test: %d", LinearProbe(category_table, test_chars, 0, strlen(test_chars)));
 
-        int32_t second_level_range = max_order_date - min_order_date + 1;
-        int32_t num_buckets = second_level_range * lock_free_linear_table.Size();
+        int32_t second_level_range = max_order_date_ - min_order_date_ + 1;
+        int32_t num_buckets = second_level_range * lock_free_linear_table_.Size();
         vector<uint32_t> bucket_ptrs_stl(num_buckets + 1);
-        memcpy(&bucket_ptrs_stl.front(), bucket_ptrs, (num_buckets + 1) * sizeof(uint32_t));
-        ar << category_table << min_order_date << max_order_date
+        memcpy(&bucket_ptrs_stl.front(), order_bucket_ptrs_, (num_buckets + 1) * sizeof(uint32_t));
+        ar << category_table << min_order_date_ << max_order_date_
            << second_level_range << num_buckets << bucket_ptrs_stl;
         ofs.flush();
     }
@@ -164,26 +167,23 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
     {
 #pragma omp for
         for (size_t i = 0; i < size_of_orders; i++) {
-            key_output[i] = reordered_orders[i].key;
-            date_output[i] = reordered_orders[i].order_date_bucket;
+            key_output[i] = reordered_orders_[i].key;
+            date_output[i] = reordered_orders_[i].order_date_bucket;
         }
     }
     log_info("Write Time: %.9lfs, TPS: %.3lf G/s", write_timer.elapsed(),
              sizeof(int32_t) * (size_of_orders) * 2 / write_timer.elapsed() / pow(10, 9));
-    free(reordered_orders);
+    free(reordered_orders_);
 }
 
 void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
     uint32_t max_ship_date = 0;
     uint32_t min_ship_date = UINT32_MAX;
     auto items = (LineItem *) malloc(sizeof(LineItem) * MAX_NUM_ITEMS);
-    auto reordered_items = (LineItem *) malloc(sizeof(LineItem) * MAX_NUM_ITEMS);
-    uint32_t *cur_write_off_item, *bucket_ptrs_item;
-    volatile uint32_t size_of_items = 0;
+    reordered_items_ = (LineItem *) malloc(sizeof(LineItem) * MAX_NUM_ITEMS);
+    uint32_t *cur_write_off_item = nullptr;
     Timer timer;
     vector<uint32_t> histogram;
-    int fd;
-
     {
 #ifdef FILE_LOAD_PREAD
         FileLoader loader(line_item_path);
@@ -194,7 +194,7 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
         {
             uint32_t buf_cap = TLS_WRITE_BUFF_SIZE;
             auto *local_buffer = (LineItem *) malloc(sizeof(LineItem) * buf_cap);
-            LineItemBuffer item_write_buffer(local_buffer, buf_cap, items, &size_of_items);
+            LineItemBuffer item_write_buffer(local_buffer, buf_cap, items, &size_of_items_);
             char *local_buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
 #pragma omp for reduction(max:max_ship_date) reduction(min:min_ship_date)
             for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
@@ -217,21 +217,27 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
                 timer.reset();
             }
             int32_t num_buckets = max_ship_date - min_ship_date + 1;
-            BucketSortSmallBuckets(histogram, items, reordered_items,
-                                   cur_write_off_item, bucket_ptrs_item, size_of_items, num_buckets,
+            BucketSortSmallBuckets(histogram, items, reordered_items_,
+                                   cur_write_off_item, bucket_ptrs_item_, size_of_items_, num_buckets,
                                    [items, min_ship_date](uint32_t it) {
                                        return items[it].ship_date_bucket - min_ship_date;
                                    }, io_threads, &timer);
             free(local_buf);
             free(local_buffer);
         }
-        log_info("Finish IO, #Rows: %zu, Min-Max: [%d, %d], Range: %d", size_of_items, min_ship_date,
-                 max_ship_date, max_ship_date - min_ship_date + 1);
+        max_ship_date_ = max_ship_date;
+        min_ship_date_ = min_ship_date;
+        log_info("Finish IO, #Rows: %zu, Min-Max: [%d, %d], Range: %d", size_of_items_, min_ship_date,
+                 max_ship_date_, max_ship_date_ - min_ship_date_ + 1);
         loader.PrintEndStat();
     }
+    free(cur_write_off_item);
     free(items);
+}
 
+void FileInputHelper::WriteLineItemIndexToFile(const char *line_item_path) {
     Timer write_timer;
+    int fd;
     string prefix = line_item_path;
     string item_order_id_path = prefix + LINE_ITEM_ORDER_KEY_FILE_SUFFIX;
     string item_price_path = prefix + LINE_ITEM_PRICE_FILE_SUFFIX;
@@ -239,26 +245,27 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
     {
         ofstream ofs(item_meta_path, std::ofstream::out);
         Archive<ofstream> ar(ofs);
-        int32_t num_buckets = max_ship_date - min_ship_date + 1;
+        int32_t num_buckets = max_ship_date_ - min_ship_date_ + 1;
         vector<uint32_t> bucket_ptrs_stl(num_buckets + 1);
-        memcpy(&bucket_ptrs_stl.front(), bucket_ptrs_item, sizeof(uint32_t) * (num_buckets + 1));
-        ar << min_ship_date << max_ship_date << num_buckets << bucket_ptrs_stl;
+        memcpy(&bucket_ptrs_stl.front(), bucket_ptrs_item_, sizeof(uint32_t) * (num_buckets + 1));
+        ar << min_ship_date_ << max_ship_date_ << num_buckets << bucket_ptrs_stl;
         ofs.flush();
     }
     log_info("Meta Cost: %.6lfs", write_timer.elapsed());
     // Key, Date...
-    auto *lt_order_id_output = GetMMAPArr<int32_t>(item_order_id_path.c_str(), fd, size_of_items);
-    auto *lt_price_output = GetMMAPArr<double>(item_price_path.c_str(), fd, size_of_items);
+    auto *lt_order_id_output = GetMMAPArr<int32_t>(item_order_id_path.c_str(), fd, size_of_items_);
+    auto *lt_price_output = GetMMAPArr<double>(item_price_path.c_str(), fd, size_of_items_);
 #pragma omp parallel
     {
 #pragma omp for
-        for (size_t i = 0; i < size_of_items; i++) {
-            lt_order_id_output[i] = reordered_items[i].order_key;
-            lt_price_output[i] = reordered_items[i].price;
+        for (size_t i = 0; i < size_of_items_; i++) {
+            lt_order_id_output[i] = reordered_items_[i].order_key;
+            lt_price_output[i] = reordered_items_[i].price;
         }
     }
-    free(reordered_items);
+    free(reordered_items_);
     log_info("Write Time: %.9lfs, TPS: %.3lf G/s", write_timer.elapsed(),
-             (sizeof(int32_t) + sizeof(double)) * (size_of_items) / write_timer.elapsed() / pow(10, 9));
+             (sizeof(int32_t) + sizeof(double)) * (size_of_items_) / write_timer.elapsed() / pow(10, 9));
 }
+
 

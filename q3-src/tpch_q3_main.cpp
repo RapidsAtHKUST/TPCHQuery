@@ -44,9 +44,11 @@ int main(int argc, char *argv[]) {
 
         // 2nd: Init Order List.
         file_input_helper.ParseOrderInputFile(order_path);
+        file_input_helper.WriteOrderIndexToFIle(order_path);
 
         // 3rd: Init LineItem List.
         file_input_helper.ParseLineItemInputFile(line_item_path);
+        file_input_helper.WriteLineItemIndexToFile(line_item_path);
     }
     log_info("Mem Usage: %d KB", getValue());
 
