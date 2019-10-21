@@ -19,4 +19,5 @@ if (OPENMP_FOUND)
 endif ()
 
 add_executable(tpch-q3 tpch_q3_main.cpp util/log.cpp file_input_indexing.cpp)
+add_executable(tpch-q3-submit tpch_q3_main_submit.cpp util/log.cpp file_input_indexing.cpp)
 
