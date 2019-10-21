@@ -18,5 +18,5 @@ if (OPENMP_FOUND)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 endif ()
 
-add_executable(tpch-q3 tpch_q3_main.cpp util/log.cpp parsing_util.cpp file_input_indexing.cpp)
+add_executable(tpch-q3 tpch_q3_main.cpp util/log.cpp file_input_indexing.cpp)
 

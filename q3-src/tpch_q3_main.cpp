@@ -4,16 +4,12 @@
 #include <unordered_map>
 
 #include "util/program_options/popl.h"
-#include "file_parser.h"
 #include "file_loader.h"
-#include "util/archive.h"
-#include "util/pretty_print.h"
 #include "file_input_indexing.h"
 
 using namespace std;
 using namespace popl;
 using namespace chrono;
-
 
 int main(int argc, char *argv[]) {
     log_info("%.9lf", StrToFloat("1.3", 0, 3));

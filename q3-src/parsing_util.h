@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cassert>
+
 #include <iomanip>
 #include <sstream>
 
@@ -48,8 +50,6 @@ inline int32_t StrToIntOnline(const char *str, size_t beg, size_t &end, char tok
     return sum;
 }
 
-extern double latter_digits[];
-
 inline double StrToFloat(const char *p, size_t beg, size_t end) {
     double r = 0.0;
     // Assume already 0-9 chars.
@@ -64,6 +64,9 @@ inline double StrToFloat(const char *p, size_t beg, size_t end) {
     for (; beg < end; beg++) {
         frac = (frac * 10.0) + (p[beg] - '0');
     }
+    static thread_local double latter_digits[] = {
+            1.0, 0.1, 0.01, 0.001, 0.0001, 0.00001, 0.000001, 0.0000001
+    };
     r += frac * latter_digits[frac_size];
     return r;
 }
@@ -85,6 +88,9 @@ inline double StrToFloatOnline(const char *p, size_t beg, size_t &end, char toke
         frac = (frac * 10.0) + (p[beg] - '0');
     }
     auto frac_size = beg - prev_beg;
+    static thread_local double latter_digits[] = {
+            1.0, 0.1, 0.01, 0.001, 0.0001, 0.00001, 0.000001, 0.0000001
+    };
     r += frac * latter_digits[frac_size];
     end = beg;
     return r;

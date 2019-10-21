@@ -48,7 +48,7 @@
 34|6100004|1998-07-21
 ```
 
-## Compile
+## Compile``
 
 ```
 mkdir -p build-dir-path
@@ -60,6 +60,6 @@ make -j
 ## Run
 
 ```
-./tpch-q3 -c /mnt/storage1/tpch-tables/customer.txt -o /mnt/storage1/tpch-tables/orders.txt -l /mnt/storage1/tpch-tables/lineitem.txt --cf test --of 1992-11-11 --lf 1992-11-11 --limit 5
+./tpch-q3 -c /tmp/tpch-tables/customer.txt -o /tmp/tpch-tables/orders.txt -l /tmp/tpch-tables/lineitem.txt --cf BUILDING --of 1995-03-29 --lf 1995-03-27 --limit 5
 ```
 
