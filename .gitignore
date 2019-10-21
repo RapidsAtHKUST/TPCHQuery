@@ -1,4 +1,5 @@
 build
+*.zip
 tpch-q3-submit
 cmake-build-debug
 .idea
