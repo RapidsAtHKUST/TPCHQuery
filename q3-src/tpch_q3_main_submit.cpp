@@ -18,7 +18,9 @@ int main(int argc, char *argv[]) {
     string line_item_path = argv[3];
     int num_queries = atoi(argv[4]);
     assert(argc >= num_queries * 4 + 5);
-
+#ifndef USE_LOG
+    omp_set_num_threads(std::thread::hardware_concurrency());
+#endif
     auto io_threads = omp_get_max_threads();
     log_info("Num Threads: %d", io_threads);
     string order_key_path = order_path + ORDER_KEY_BIN_FILE_SUFFIX;
