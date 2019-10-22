@@ -1,5 +1,11 @@
 # TPCHQuery
 
+## Create Symbolic Links of Files
+
+```bash
+./link_files.sh /tmp/tpch-tables 
+```
+
 ## Compile 
 
 ```bash
