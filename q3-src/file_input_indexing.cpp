@@ -12,7 +12,8 @@
 #include "util/primitives/parasort_cmp.h"
 
 #define TLS_WRITE_BUFF_SIZE (1024 * 1024)
-
+//#define GetIndexArr GetMallocPReadArrReadOnly
+#define GetIndexArr GetMMAPArrReadOnly
 using namespace std;
 
 void FileInputHelper::ParseCustomerInputFile(const char *customer_path) {
@@ -303,8 +304,8 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
              order_second_level_range_, order_num_buckets_, order_bucket_ptrs_.size(), size_of_orders_);
 //    cout << order_bucket_ptrs_ << endl;
     int fd;
-    order_keys_ = GetMMAPArrReadOnly<int32_t>(order_key_path.c_str(), fd, size_of_orders_);
-    order_dates_ = GetMMAPArrReadOnly<uint32_t>(order_date_path.c_str(), fd, size_of_orders_);
+    order_keys_ = GetIndexArr<int32_t>(order_key_path.c_str(), fd, size_of_orders_);
+    order_dates_ = GetIndexArr<uint32_t>(order_date_path.c_str(), fd, size_of_orders_);
     log_info("Finish Order Index Loading...Not Populate Yet");
 
     // Load LineItem.
@@ -319,8 +320,8 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
     size_of_items_ = item_bucket_ptrs_.back();
     log_info("%d, %d, %d, %zu, %d", min_ship_date_, max_ship_date_, item_num_buckets_, item_bucket_ptrs_.size(),
              size_of_items_);
-    item_order_keys_ = GetMMAPArrReadOnly<int32_t>(item_order_id_path.c_str(), fd, size_of_items_);
-    item_prices_ = GetMMAPArrReadOnly<double>(item_price_path.c_str(), fd, size_of_items_);
+    item_order_keys_ = GetIndexArr<int32_t>(item_order_id_path.c_str(), fd, size_of_items_);
+    item_prices_ = GetIndexArr<double>(item_price_path.c_str(), fd, size_of_items_);
     log_info("Finish LineItem Loading...Not Populate Yet");
 
 }
@@ -366,17 +367,19 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
     vector<uint32_t> histogram;
 
     Timer timer;
+    auto order_bucket_ptr_beg = order_bucket_ptrs_[o_bucket_beg];
+    auto order_bucket_ptr_end = order_bucket_ptrs_[o_bucket_end];
 #pragma omp parallel
     {
         int tid = omp_get_thread_num();
         int num_threads = omp_get_num_threads();
         MemSetOMP(acc_prices, 0, order_array_view_size, tid, num_threads);
-#pragma omp for
-        for (size_t i = 0; i < order_array_view_size; i++) {
-            assert(acc_prices[i] == 0);
-        }
+//#pragma omp for
+//        for (size_t i = 0; i < order_array_view_size; i++) {
+//            assert(acc_prices[i] == 0);
+//        }
 #pragma omp for reduction(max:max_order_id)
-        for (size_t i = order_bucket_ptrs_[o_bucket_beg]; i < order_bucket_ptrs_[o_bucket_end]; i++) {
+        for (size_t i = order_bucket_ptr_beg; i < order_bucket_ptr_end; i++) {
             max_order_id = max(max_order_id, order_keys_[i]);
         }
 #pragma omp single
@@ -389,10 +392,10 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
 #pragma omp single
         log_info("Before Construction Data Structures: %.6lfs", timer.elapsed());
 #pragma omp for
-        for (auto i = order_bucket_ptrs_[o_bucket_beg]; i < order_bucket_ptrs_[o_bucket_end]; i++) {
+        for (auto i = order_bucket_ptr_beg; i < order_bucket_ptr_end; i++) {
             auto order_key = order_keys_[i];
             bmp[order_key] = true;
-            order_pos_dict[order_key] = i - order_bucket_ptrs_[o_bucket_beg];
+            order_pos_dict[order_key] = i - order_bucket_ptr_beg;
         }
 #pragma omp single
         log_info("Before Aggregation: %.6lfs", timer.elapsed());
@@ -413,7 +416,7 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
             if (acc_prices[i] != 0) {
                 size_of_results++;
                 auto off = i - relative_off[i];
-                results[off] = {.order_offset=i + order_bucket_ptrs_[o_bucket_beg], .price= acc_prices[i]};
+                results[off] = {.order_offset=i + order_bucket_ptr_beg, .price= acc_prices[i]};
             }
         }
     }
