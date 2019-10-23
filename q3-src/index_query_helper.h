@@ -5,10 +5,6 @@
 #include "config.h"
 #include "file_parser.h"
 
-#include "cuda/primitives.cuh"
-#include "cuda/cuda_base.cuh"
-#include "cuda/CUDAStat.cuh"
-
 using namespace std;
 
 class IndexHelper {
@@ -42,4 +38,9 @@ public:
     IndexHelper(string order_path, string line_item_path);
 
     void Query(string category, string order_date, string ship_date, int limit);
+};
+
+struct Result {
+    uint32_t order_offset;
+    double price;
 };

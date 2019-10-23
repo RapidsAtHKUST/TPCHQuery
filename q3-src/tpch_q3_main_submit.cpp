@@ -3,13 +3,11 @@
 //
 #include <unordered_map>
 
-#include "util/program_options/popl.h"
 #include "file_loader.h"
 #include "index_query_helper.h"
 #include "file_input_helper.h"
 
 using namespace std;
-using namespace popl;
 using namespace chrono;
 
 int main(int argc, char *argv[]) {

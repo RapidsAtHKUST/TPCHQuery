@@ -22,9 +22,7 @@ if (OPENMP_FOUND)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 endif ()
-
-#add_executable(tpch-q3 tpch_q3_main.cpp util/log.cpp file_input_indexing.cpp)
-#add_executable(tpch-q3-submit tpch_q3_main_submit.cpp util/log.cpp file_input_indexing.cpp)
+set(CPP_FILES tpch_q3_main_submit.cpp util/log.cpp file_input_helper.cpp index_query_helper.cpp)
 
 find_package(CUDA)
 if (CUDA_FOUND)
@@ -84,15 +82,17 @@ if (CUDA_FOUND)
         cuda_add_compile_options("-DUSE_GPU=1")           #use GPU for evaluation
     endif ()
 
-    set(JETBRAIN_FAKE_IDX_FILES file_input_helper.h index_query_helper.h file_loader_gpu.h)
-    set(CUDA_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_helper.cpp index_query_helper.cu
-            ${JETBRAIN_FAKE_IDX_FILES})
-    cuda_add_executable(tpch-q3-submit ${CUDA_SOURCE_FILES})
+    set(JETBRAIN_FAKE_IDX_FILES file_loader_gpu.h)
+    cuda_add_library(query_offloading query_offloading_gpu.cu ${JETBRAIN_FAKE_IDX_FILES})
 
+    add_executable(tpch-q3-submit ${CPP_FILES})
+    target_compile_definitions(tpch-q3-submit PRIVATE USE_GPU=1)
+    target_link_libraries(tpch-q3-submit PRIVATE query_offloading)
+else ()
+    add_executable(tpch-q3-submit ${CPP_FILES})
 endif ()
 
-#set(CPP_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_indexing.cu)
-#add_executable(tpch-q3-submit-cpu ${CPP_SOURCE_FILES})
+#add_executable(tpch-q3-submit-cpu ${CPP_FILES})
 
 install(TARGETS tpch-q3-submit DESTINATION .)
 
