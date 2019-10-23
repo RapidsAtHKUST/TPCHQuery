@@ -9,19 +9,14 @@
 
 #include <omp.h>
 
+#include "config.h"
 #include "util/log.h"
 #include "util/primitives/local_buffer.h"
 #include "parsing_util.h"
 #include "lock_free_table.h"
 
-#define DATE_LEN (10)
-
 //#define NAIVE_PARSING
 using namespace std;
-
-#define MAX_NUM_CUSTOMERS (15000000)
-#define MAX_NUM_ORDERS (150000000)
-#define MAX_NUM_ITEMS (600037902)
 
 struct Customer {
     int32_t key;

@@ -37,7 +37,7 @@ if (CUDA_FOUND)
     if (USE_ARCH)
         message(STATUS "User has specified ARCH: ${USE_ARCH}")
         set(ARCH -arch=${USE_ARCH})
-    else() # checking the default arch of the current platform
+    else () # checking the default arch of the current platform
         set(OUTPUTFILE ./cuda_script)
         set(CUDAFILE ${CMAKE_SOURCE_DIR}/check_cuda.cu)
         execute_process(COMMAND nvcc -lcuda ${CUDAFILE} -o ${OUTPUTFILE})
@@ -45,11 +45,11 @@ if (CUDA_FOUND)
                 RESULT_VARIABLE CUDA_RETURN_CODE
                 OUTPUT_VARIABLE ARCH)
 
-        if(${CUDA_RETURN_CODE} EQUAL 0)
+        if (${CUDA_RETURN_CODE} EQUAL 0)
             set(CUDA_SUCCESS "TRUE")
-        else()
+        else ()
             set(CUDA_SUCCESS "FALSE")
-        endif()
+        endif ()
 
         if (${CUDA_SUCCESS})
             message(STATUS "CUDA Default Architecture: ${ARCH}")
@@ -57,9 +57,9 @@ if (CUDA_FOUND)
             message(STATUS "CUDA Path: ${CUDA_TOOLKIT_ROOT_DIR}")
             message(STATUS "CUDA Libararies: ${CUDA_LIBRARIES}")
             message(STATUS "CUDA Performance Primitives: ${CUDA_npp_LIBRARY}")
-        else()
+        else ()
             message(WARNING ${ARCH})
-        endif()
+        endif ()
     endif ()
 
     message(STATUS "Architecture specified: ${ARCH}")
@@ -68,26 +68,28 @@ if (CUDA_FOUND)
         list(APPEND CUDA_NVCC_FLAGS "${options}")
     endmacro()
     cuda_add_compile_options("-std=c++11 -O3 -g -lineinfo ${ARCH}")
-#    cuda_add_compile_options("--compiler-bindir /usr/local/bin/gcc6")
+    #    cuda_add_compile_options("--compiler-bindir /usr/local/bin/gcc6")
 
     cuda_add_compile_options("--expt-extended-lambda -Wno-deprecated-gpu-targets")
 
     if (${ENABLE_LOG})
         cuda_add_compile_options("-DUSE_LOG")
-    endif()
+    endif ()
 
     cuda_add_compile_options("-Xcompiler=\"-fopenmp\"")
     cuda_add_compile_options("-Xcompiler=\"-Wno-deprecated\"")
     #    cuda_add_compile_options("-Xptxas -v")         #list the usage of registers and memory
 
-    if(${ENABLE_GPU})
+    if (${ENABLE_GPU})
         cuda_add_compile_options("-DUSE_GPU=1")           #use GPU for evaluation
-    endif()
+    endif ()
 
-    set(CUDA_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_indexing.cu)
+    set(JETBRAIN_FAKE_IDX_FILES file_input_helper.h index_query_helper.h file_loader_gpu.h)
+    set(CUDA_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_helper.cpp index_query_helper.cu
+            ${JETBRAIN_FAKE_IDX_FILES})
     cuda_add_executable(tpch-q3-submit ${CUDA_SOURCE_FILES})
 
-endif()
+endif ()
 
 #set(CPP_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_indexing.cu)
 #add_executable(tpch-q3-submit-cpu ${CPP_SOURCE_FILES})
