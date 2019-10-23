@@ -44,7 +44,7 @@ void filterJoin(
     while (gtid < end_pos) {
         auto order_key = item_order_keys_[gtid];
         if ((order_key <= max_order_id) && (bmp[order_key])) {
-            acc_prices[order_pos_dict[order_key]] += item_prices_[gtid];
+            atomicAdd(&acc_prices[order_pos_dict[order_key]],item_prices_[gtid]);
         }
         gtid += gtnum;
     }
@@ -364,13 +364,48 @@ struct Result {
     double price;
 };
 
+inline uint64_t __double_as_longlong_CPU(double input) {
+    union
+    {
+        uint64_t res;
+        double src;
+    };
+    src = input;
+    return res;
+}
+
+inline double __longlong_as_double_CPU(uint64_t input) {
+    union
+    {
+        double res;
+        uint64_t src;
+    };
+    src = input;
+    return res;
+}
+
+inline double __sync_fetch_and_add_double(double *address, double val) {
+     uint64_t* address_as_ull = (uint64_t*)address;
+     uint64_t old = *address_as_ull;
+     uint64_t assumed;
+
+    do {
+        assumed = old;
+        old = __sync_val_compare_and_swap(address_as_ull, assumed, __double_as_longlong_CPU(val + __longlong_as_double_CPU(assumed)));
+
+        // Note: uses integer comparison to avoid hang in case of NaN (since NaN != NaN)
+    } while (assumed != old);
+
+    return __longlong_as_double_CPU(assumed);
+}
+
 void evaluateWithCPU(
         int32_t *order_keys_, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
         int32_t *item_order_keys_, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
         double *item_prices_, uint32_t order_array_view_size, int lim,
         int32_t &size_of_results, Result *results)
 {
-    log_trace("Evaluate with GPU");
+    log_trace("Evaluate with CPU");
 
     Timer timer;
     auto relative_off = (uint32_t *) malloc(sizeof(uint32_t) * order_array_view_size);
@@ -415,7 +450,7 @@ void evaluateWithCPU(
         for (size_t i = lineitem_bucket_ptr_beg; i < lineitem_bucket_ptr_end; i++) {
             auto order_key = item_order_keys_[i];
             if ((order_key <= max_order_id) && (bmp[order_key])) {
-                acc_prices[order_pos_dict[order_key]] += item_prices_[i];
+                __sync_fetch_and_add_double(&acc_prices[order_pos_dict[order_key]], item_prices_[i]);
             }
         }
 #pragma omp single

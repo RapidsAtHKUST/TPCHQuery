@@ -72,7 +72,7 @@ if (CUDA_FOUND)
     cuda_add_compile_options("-Xcompiler=\"-fopenmp\"")
     cuda_add_compile_options("-Xcompiler=\"-Wno-deprecated\"")
 
-    cuda_add_compile_options("-DUSE_GPU=1")           #use GPU for evaluation
+#    cuda_add_compile_options("-DUSE_GPU=1")           #use GPU for evaluation
     cuda_add_compile_options("-DDEVICE_ID=6")           #set device id
 
     #    cuda_add_compile_options("-Xptxas -v")         #list the usage of registers and memory
