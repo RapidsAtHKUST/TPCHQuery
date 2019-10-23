@@ -402,7 +402,10 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
 #pragma omp for
         for (size_t i = item_bucket_ptrs_[item_bucket_beg]; i < item_bucket_ptrs_[item_bucket_end]; i++) {
             auto order_key = item_order_keys_[i];
-            if (bmp[order_key]) {
+//            if (order_key > max_order_id) {
+//                log_info("%d", order_key);
+//            }
+            if (order_key <= max_order_id && bmp[order_key]) {
                 acc_prices[order_pos_dict[order_key]] += item_prices_[i];
             }
         }
