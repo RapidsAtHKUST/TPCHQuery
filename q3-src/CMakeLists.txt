@@ -71,7 +71,11 @@ if (CUDA_FOUND)
 #    cuda_add_compile_options("--compiler-bindir /usr/local/bin/gcc6")
 
     cuda_add_compile_options("--expt-extended-lambda -Wno-deprecated-gpu-targets")
-    cuda_add_compile_options("-DUSE_LOG")
+
+    if (${ENABLE_LOG})
+        cuda_add_compile_options("-DUSE_LOG")
+    endif()
+
     cuda_add_compile_options("-Xcompiler=\"-fopenmp\"")
     cuda_add_compile_options("-Xcompiler=\"-Wno-deprecated\"")
     #    cuda_add_compile_options("-Xptxas -v")         #list the usage of registers and memory
@@ -85,8 +89,8 @@ if (CUDA_FOUND)
 
 endif()
 
-set(CPP_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_indexing.cu)
-add_executable(tpch-q3-submit-cpu ${CPP_SOURCE_FILES})
+#set(CPP_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_indexing.cu)
+#add_executable(tpch-q3-submit-cpu ${CPP_SOURCE_FILES})
 
 install(TARGETS tpch-q3-submit DESTINATION .)
 
