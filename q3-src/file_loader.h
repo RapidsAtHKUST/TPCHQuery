@@ -7,6 +7,9 @@
 #include "util/util.h"
 #include "parsing_util.h"
 
+#include "cuda/cuda_base.cuh"
+#include "cuda/CUDAStat.cuh"
+
 template<typename T>
 T *GetMMAPArr(const char *file_name, int &file_fd, size_t arr_size) {
     Timer populate_timer;
@@ -41,7 +44,12 @@ T *GetMallocPReadArrReadOnly(const char *file_name, int &file_fd, size_t arr_siz
     log_info("File Size: %zu", file_size);
     assert(file_fd >= 0);
 
+#ifdef USE_GPU
+    char *arr = nullptr;
+    CUDA_MALLOC(&arr, sizeof(char)*file_size, nullptr);
+#else
     auto arr = (char *) malloc(file_size);
+#endif
 
 #pragma omp parallel for
     for (size_t i = 0; i < file_size; i += IO_REQ_SIZE) {

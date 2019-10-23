@@ -12,10 +12,43 @@
 #include "util/primitives/parasort_cmp.h"
 
 #define TLS_WRITE_BUFF_SIZE (1024 * 1024)
-//#define GetIndexArr GetMallocPReadArrReadOnly
-#define GetIndexArr GetMMAPArrReadOnly
+#define GetIndexArr GetMallocPReadArrReadOnly
+//#define GetIndexArr GetMMAPArrReadOnly
 using namespace std;
 
+__global__
+void buildBooleanArray(
+        uint32_t start_pos, uint32_t end_pos,
+        int32_t *order_keys_, bool *bmp, uint32_t *order_pos_dict)
+{
+    auto gtid = threadIdx.x + blockDim.x * blockIdx.x + start_pos;
+    auto gtnum = blockDim.x * gridDim.x;
+
+    while (gtid < end_pos) {
+        auto order_key = order_keys_[gtid];
+        bmp[order_key] = true;
+        order_pos_dict[order_key] = gtid - start_pos;
+        gtid += gtnum;
+    }
+}
+
+__global__
+void filterJoin(
+        uint32_t start_pos, uint32_t end_pos,
+        int32_t *item_order_keys_, double *acc_prices, double *item_prices_, int32_t max_order_id,
+        bool *bmp, uint32_t *order_pos_dict)
+{
+    auto gtid = threadIdx.x + blockDim.x * blockIdx.x + start_pos;
+    auto gtnum = blockDim.x * gridDim.x;
+
+    while (gtid < end_pos) {
+        auto order_key = item_order_keys_[gtid];
+        if ((order_key <= max_order_id) && (bmp[order_key])) {
+            acc_prices[order_pos_dict[order_key]] += item_prices_[gtid];
+        }
+        gtid += gtnum;
+    }
+}
 void FileInputHelper::ParseCustomerInputFile(const char *customer_path) {
     int32_t max_id = INT32_MIN;
     int32_t min_id = INT32_MAX;
@@ -331,44 +364,23 @@ struct Result {
     double price;
 };
 
-void IndexHelper::Query(string category, string order_date, string ship_date, int limit) {
-    uint32_t o_date = ConvertDateToBucketID(order_date.c_str());
-    uint32_t s_date = ConvertDateToBucketID(ship_date.c_str());
-    int category_id = LinearProbe(category_table_, category.c_str(), 0, category.size());
-    log_info("%d, %.*s, [%d, %d), [%d, %d)", category_id, category_table_[category_id].size,
-             category_table_[category_id].chars,
-             min_order_date_, o_date, s_date + 1, max_ship_date_ + 1);
-    // Exclusive "< o_date", "> s_date".
-    if (o_date <= min_order_date_ || s_date >= max_ship_date_) {
-        return;
-    }
-    uint32_t o_bucket_beg = category_id * order_second_level_range_ + 0;
-    uint32_t o_bucket_end = category_id * order_second_level_range_ +
-                            (min(o_date, max_order_date_ + 1) - min_order_date_);
+void evaluateWithCPU(
+        int32_t *order_keys_, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
+        int32_t *item_order_keys_, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
+        double *item_prices_, uint32_t order_array_view_size, int lim,
+        int32_t &size_of_results, Result *results)
+{
+    log_trace("Evaluate with GPU");
 
-    uint32_t item_bucket_beg = max(s_date + 1, min_ship_date_) - min_ship_date_;
-    uint32_t item_bucket_end = item_num_buckets_;
-    log_info("Order Bucket Range: [%d, %d); Item Bucket Range: [%d, %d)",
-             o_bucket_beg, o_bucket_end, item_bucket_beg, item_bucket_end);
-    auto order_array_view_size = order_bucket_ptrs_[o_bucket_end] - order_bucket_ptrs_[o_bucket_beg];
-    auto item_array_view_size = item_bucket_ptrs_[item_bucket_end] - item_bucket_ptrs_[item_bucket_beg];
-    log_info("[%d, %d): %d, [%d, %d): %d", order_bucket_ptrs_[o_bucket_beg], order_bucket_ptrs_[o_bucket_end],
-             order_array_view_size, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
-             item_array_view_size);
-    // Join & Aggregate.
-    auto acc_prices = (double *) malloc(sizeof(double) * order_array_view_size);
+    Timer timer;
     auto relative_off = (uint32_t *) malloc(sizeof(uint32_t) * order_array_view_size);
-    auto results = (Result *) malloc(sizeof(Result) * order_array_view_size);
     uint32_t *order_pos_dict;
     bool *bmp;
-    int32_t size_of_results = 0;
-    log_info("%d", order_keys_[order_bucket_ptrs_[o_bucket_beg]]);
     int32_t max_order_id = 0;
     vector<uint32_t> histogram;
 
-    Timer timer;
-    auto order_bucket_ptr_beg = order_bucket_ptrs_[o_bucket_beg];
-    auto order_bucket_ptr_end = order_bucket_ptrs_[o_bucket_end];
+    auto acc_prices = (double *) malloc(sizeof(double) * order_array_view_size);
+
 #pragma omp parallel
     {
         int tid = omp_get_thread_num();
@@ -400,9 +412,9 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
 #pragma omp single
         log_info("Before Aggregation: %.6lfs", timer.elapsed());
 #pragma omp for
-        for (size_t i = item_bucket_ptrs_[item_bucket_beg]; i < item_bucket_ptrs_[item_bucket_end]; i++) {
+        for (size_t i = lineitem_bucket_ptr_beg; i < lineitem_bucket_ptr_end; i++) {
             auto order_key = item_order_keys_[i];
-            if (bmp[order_key]) {
+            if ((order_key <= max_order_id) && (bmp[order_key])) {
                 acc_prices[order_pos_dict[order_key]] += item_prices_[i];
             }
         }
@@ -422,6 +434,8 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
     }
     free(order_pos_dict);
     free(bmp);
+    free(acc_prices);
+    free(relative_off);
     log_info("Non Zeros: %zu", size_of_results);
     // Select & Sort & Return Top (min(K, #results)).
 #ifdef BASELINE_SORT
@@ -433,6 +447,155 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
         return l.price > r.price;
     }, omp_get_max_threads());
 #endif
+}
+
+void evaluateWithGPU(
+        int32_t *order_keys_, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
+        int32_t *item_order_keys_, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
+        double *item_prices_, uint32_t order_array_view_size, int lim, int32_t &size_of_results, Result *t,
+        CUDAMemStat *memstat, CUDATimeStat *timing)
+{
+    log_trace("Evaluate with GPU");
+
+    Timer timer;
+    int32_t max_order_id = CUBMax(&order_keys_[order_bucket_ptr_beg], (order_bucket_ptr_end-order_bucket_ptr_beg), memstat, timing);
+    log_info("BMP Size: %d", max_order_id + 1);
+
+    double *acc_prices = nullptr;
+    CUDA_MALLOC(&acc_prices, sizeof(double) * order_array_view_size, memstat);
+    checkCudaErrors(cudaMemset(acc_prices, 0, sizeof(double)*order_array_view_size));
+
+    /*construct the mapping*/
+    bool *bmp = nullptr;
+    uint32_t *order_pos_dict = nullptr;
+    CUDA_MALLOC(&bmp, sizeof(bool)*(max_order_id+1), memstat);
+    CUDA_MALLOC(&order_pos_dict, sizeof(uint32_t) * (max_order_id + 1), memstat);
+    checkCudaErrors(cudaMemset(bmp, 0, sizeof(bool)*(max_order_id+1)));
+    log_info("Before Construction Data Structures: %.6lfs", timer.elapsed());
+
+    /*build the boolean filter*/
+    execKernel(buildBooleanArray, 1024, 256, timing, false,
+                order_bucket_ptr_beg, order_bucket_ptr_end,
+                order_keys_, bmp, order_pos_dict);
+    log_info("Before Aggregation: %.6lfs", timer.elapsed());
+
+    execKernel(filterJoin, 1024, 256, timing, false,
+               lineitem_bucket_ptr_beg, lineitem_bucket_ptr_end,
+               item_order_keys_, acc_prices, item_prices_, max_order_id, bmp, order_pos_dict);
+    log_info("Before Select: %.6lfs", timer.elapsed());
+
+    bool *flag_is_zero = nullptr;
+    CUDA_MALLOC(&flag_is_zero, sizeof(bool)*order_array_view_size, memstat);
+
+    /*the results*/
+    double *acc_price_filtered = nullptr;
+    CUDA_MALLOC(&acc_price_filtered, sizeof(double) * order_array_view_size, memstat);
+
+    uint32_t *order_offset = nullptr, *order_offset_filtered = nullptr;
+    CUDA_MALLOC(&order_offset, sizeof(uint32_t)*order_array_view_size, memstat);
+    CUDA_MALLOC(&order_offset_filtered, sizeof(uint32_t)*order_array_view_size, memstat);
+
+    auto iter_begin = thrust::make_counting_iterator(0u);
+    auto iter_end = thrust::make_counting_iterator(order_array_view_size);
+
+    thrust::counting_iterator<uint32_t> iter(order_bucket_ptr_beg);
+    timingKernel(
+            thrust::copy(iter, iter + order_array_view_size, order_offset), timing);
+
+    /*construct the boolean filter*/
+    timingKernel(
+            thrust::transform(thrust::device, iter_begin, iter_end, flag_is_zero, [=] __device__(uint32_t idx) {
+            return acc_prices[idx] > 0.0;
+    }), timing);
+
+    /*filter the acc_price*/
+    size_of_results = CUBSelect(acc_prices, acc_price_filtered, flag_is_zero, order_array_view_size, memstat, timing);
+    CUBSelect(order_offset, order_offset_filtered, flag_is_zero, order_array_view_size, memstat, timing);
+
+    CUDA_FREE(flag_is_zero, memstat);
+    CUDA_FREE(order_offset, memstat);
+    CUDA_FREE(acc_prices, memstat);
+
+    log_info("Non Zeros: %zu", size_of_results);
+
+    double *acc_price_sorted = nullptr;
+    uint32_t *order_offset_sorted = nullptr;
+    CUDA_MALLOC(&acc_price_sorted, sizeof(double)*size_of_results, memstat);
+    CUDA_MALLOC(&order_offset_sorted, sizeof(uint32_t)*size_of_results, memstat);
+
+    /*CUB sort pairs*/
+    void *d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    cub::DeviceRadixSort::SortPairsDescending(d_temp_storage, temp_storage_bytes, acc_price_filtered, acc_price_sorted, order_offset_filtered, order_offset_sorted, size_of_results);
+    CUDA_MALLOC(&d_temp_storage, temp_storage_bytes, memstat);
+    cub::DeviceRadixSort::SortPairsDescending(d_temp_storage, temp_storage_bytes, acc_price_filtered, acc_price_sorted, order_offset_filtered, order_offset_sorted, size_of_results);
+    cudaDeviceSynchronize();
+
+    for(auto i = 0; i < lim; i++)
+    {
+        t[i].price = acc_price_sorted[i];
+        t[i].order_offset = order_offset_sorted[i];
+    }
+
+    CUDA_FREE(d_temp_storage, memstat);
+    CUDA_FREE(bmp, memstat);
+    CUDA_FREE(order_pos_dict, memstat);
+    CUDA_FREE(acc_price_filtered, memstat);
+    CUDA_FREE(order_offset_filtered, memstat);
+    CUDA_FREE(acc_price_sorted, memstat);
+    CUDA_FREE(order_offset_sorted, memstat);
+}
+
+void IndexHelper::Query(string category, string order_date, string ship_date, int limit) {
+    CUDAMemStat memstat;
+    CUDATimeStat timing;
+
+    uint32_t o_date = ConvertDateToBucketID(order_date.c_str());
+    uint32_t s_date = ConvertDateToBucketID(ship_date.c_str());
+    int category_id = LinearProbe(category_table_, category.c_str(), 0, category.size());
+    log_info("%d, %.*s, [%d, %d), [%d, %d)", category_id, category_table_[category_id].size,
+             category_table_[category_id].chars,
+             min_order_date_, o_date, s_date + 1, max_ship_date_ + 1);
+    // Exclusive "< o_date", "> s_date".
+    if (o_date <= min_order_date_ || s_date >= max_ship_date_) {
+        return;
+    }
+    uint32_t o_bucket_beg = category_id * order_second_level_range_ + 0;
+    uint32_t o_bucket_end = category_id * order_second_level_range_ +
+                            (min(o_date, max_order_date_ + 1) - min_order_date_);
+
+    uint32_t item_bucket_beg = max(s_date + 1, min_ship_date_) - min_ship_date_;
+    uint32_t item_bucket_end = item_num_buckets_;
+    log_info("Order Bucket Range: [%d, %d); Item Bucket Range: [%d, %d)",
+             o_bucket_beg, o_bucket_end, item_bucket_beg, item_bucket_end);
+    auto order_array_view_size = order_bucket_ptrs_[o_bucket_end] - order_bucket_ptrs_[o_bucket_beg];
+    auto item_array_view_size = item_bucket_ptrs_[item_bucket_end] - item_bucket_ptrs_[item_bucket_beg];
+    log_info("[%d, %d): %d, [%d, %d): %d", order_bucket_ptrs_[o_bucket_beg], order_bucket_ptrs_[o_bucket_end],
+             order_array_view_size, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
+             item_array_view_size);
+
+    // Join & Aggregate.
+    auto results = (Result *) malloc(sizeof(Result) * order_array_view_size);
+    int32_t size_of_results = 0;
+    log_info("%d", order_keys_[order_bucket_ptrs_[o_bucket_beg]]);
+
+    Timer timer;
+    auto order_bucket_ptr_beg = order_bucket_ptrs_[o_bucket_beg];
+    auto order_bucket_ptr_end = order_bucket_ptrs_[o_bucket_end];
+
+#ifdef USE_GPU
+    evaluateWithGPU(
+            order_keys_, order_bucket_ptr_beg, order_bucket_ptr_end,
+            item_order_keys_, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
+            item_prices_, order_array_view_size, limit, size_of_results, results,
+            &memstat, &timing);
+#else
+    evaluateWithCPU(
+            order_keys_, order_bucket_ptr_beg, order_bucket_ptr_end,
+            item_order_keys_, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
+            item_prices_, order_array_view_size, limit, size_of_results, results);
+#endif
+
     printf("l_orderkey|o_orderdate|revenue\n");
     for (auto i = 0; i < min<int32_t>(size_of_results, limit); i++) {
         char date[DATE_LEN + 1];
@@ -442,4 +605,7 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
                order_keys_[results[i].order_offset], date, results[i].price);
     }
     log_info("Query Time: %.6lfs", timer.elapsed());
+
+    log_info("Maximal device memory demanded: %ld bytes.", memstat.get_max_use());
+    log_info("Unfreed device memory size: %ld bytes.", memstat.get_cur_use());
 }

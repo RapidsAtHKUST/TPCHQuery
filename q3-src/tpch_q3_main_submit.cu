@@ -12,6 +12,9 @@ using namespace popl;
 using namespace chrono;
 
 int main(int argc, char *argv[]) {
+
+    cudaSetDevice(DEVICE_ID);
+
     assert(argc >= 5);
     string customer_path = argv[1];
     string order_path = argv[2];

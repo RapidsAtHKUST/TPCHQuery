@@ -5,6 +5,10 @@
 #include "lock_free_table.h"
 #include "file_parser.h"
 
+#include "cuda/primitives.cuh"
+#include "cuda/cuda_base.cuh"
+#include "cuda/CUDAStat.cuh"
+
 #define FILE_LOAD_PREAD
 
 #define ORDER_KEY_BIN_FILE_SUFFIX ("_ORDER_KEY.rapids")

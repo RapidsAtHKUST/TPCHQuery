@@ -23,7 +23,65 @@ if (OPENMP_FOUND)
 endif ()
 
 #add_executable(tpch-q3 tpch_q3_main.cpp util/log.cpp file_input_indexing.cpp)
-add_executable(tpch-q3-submit tpch_q3_main_submit.cpp util/log.cpp file_input_indexing.cpp)
+#add_executable(tpch-q3-submit tpch_q3_main_submit.cpp util/log.cpp file_input_indexing.cpp)
+
+find_package(CUDA)
+if (CUDA_FOUND)
+    message("--- CUDA Found, Toolkit Path: ${CUDA_TOOLKIT_ROOT_DIR}/")
+    include_directories(${CUDA_TOOLKIT_ROOT_DIR}/include)
+    include_directories(${CUDA_TOOLKIT_ROOT_DIR}/samples/common/inc) #for helper_cuda.h
+
+    if (USE_ARCH)
+        message(STATUS "User has specified ARCH: ${USE_ARCH}")
+        set(ARCH -arch=${USE_ARCH})
+    else() # checking the default arch of the current platform
+        set(OUTPUTFILE ./cuda_script)
+        set(CUDAFILE ${CMAKE_SOURCE_DIR}/check_cuda.cu)
+        execute_process(COMMAND nvcc -lcuda ${CUDAFILE} -o ${OUTPUTFILE})
+        execute_process(COMMAND ${OUTPUTFILE}
+                RESULT_VARIABLE CUDA_RETURN_CODE
+                OUTPUT_VARIABLE ARCH)
+
+        if(${CUDA_RETURN_CODE} EQUAL 0)
+            set(CUDA_SUCCESS "TRUE")
+        else()
+            set(CUDA_SUCCESS "FALSE")
+        endif()
+
+        if (${CUDA_SUCCESS})
+            message(STATUS "CUDA Default Architecture: ${ARCH}")
+            message(STATUS "CUDA Version: ${CUDA_VERSION_STRING}")
+            message(STATUS "CUDA Path: ${CUDA_TOOLKIT_ROOT_DIR}")
+            message(STATUS "CUDA Libararies: ${CUDA_LIBRARIES}")
+            message(STATUS "CUDA Performance Primitives: ${CUDA_npp_LIBRARY}")
+        else()
+            message(WARNING ${ARCH})
+        endif()
+    endif ()
+
+    message(STATUS "Architecture specified: ${ARCH}")
+
+    macro(cuda_add_compile_options options)
+        list(APPEND CUDA_NVCC_FLAGS "${options}")
+    endmacro()
+    cuda_add_compile_options("-std=c++11 -O3 -g -lineinfo ${ARCH}")
+#    cuda_add_compile_options("--compiler-bindir /usr/local/bin/gcc6")
+
+    cuda_add_compile_options("--expt-extended-lambda -Wno-deprecated-gpu-targets")
+    cuda_add_compile_options("-DUSE_LOG")
+    cuda_add_compile_options("-Xcompiler=\"-fopenmp\"")
+    cuda_add_compile_options("-Xcompiler=\"-Wno-deprecated\"")
+
+    cuda_add_compile_options("-DUSE_GPU=1")           #use GPU for evaluation
+    cuda_add_compile_options("-DDEVICE_ID=6")           #set device id
+
+    #    cuda_add_compile_options("-Xptxas -v")         #list the usage of registers and memory
+    #    cuda_add_compile_options("-DDEBUG")            #debug mode
+
+    set(CUDA_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_indexing.cu)
+    cuda_add_executable(tpch-q3-submit ${CUDA_SOURCE_FILES})
+
+endif()
 
 install(TARGETS tpch-q3-submit DESTINATION .)
 
