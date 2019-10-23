@@ -10,6 +10,7 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 
 add_compile_options(-Wall -O3 -g -march=native)
 
+option(ENABLE_GPU "enable GPU" ON)
 option(ENABLE_LOG "enable log" ON)
 if (ENABLE_LOG)
     add_definitions(-DUSE_LOG)
@@ -30,6 +31,8 @@ if (CUDA_FOUND)
     message("--- CUDA Found, Toolkit Path: ${CUDA_TOOLKIT_ROOT_DIR}/")
     include_directories(${CUDA_TOOLKIT_ROOT_DIR}/include)
     include_directories(${CUDA_TOOLKIT_ROOT_DIR}/samples/common/inc) #for helper_cuda.h
+    message(${CMAKE_CXX_COMPILER})
+    set(CUDA_NVCC_FLAGS "-ccbin ${CMAKE_CXX_COMPILER}")
 
     if (USE_ARCH)
         message(STATUS "User has specified ARCH: ${USE_ARCH}")
@@ -71,17 +74,19 @@ if (CUDA_FOUND)
     cuda_add_compile_options("-DUSE_LOG")
     cuda_add_compile_options("-Xcompiler=\"-fopenmp\"")
     cuda_add_compile_options("-Xcompiler=\"-Wno-deprecated\"")
-
-#    cuda_add_compile_options("-DUSE_GPU=1")           #use GPU for evaluation
-    cuda_add_compile_options("-DDEVICE_ID=6")           #set device id
-
     #    cuda_add_compile_options("-Xptxas -v")         #list the usage of registers and memory
-    #    cuda_add_compile_options("-DDEBUG")            #debug mode
+
+    if(${ENABLE_GPU})
+        cuda_add_compile_options("-DUSE_GPU=1")           #use GPU for evaluation
+    endif()
 
     set(CUDA_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_indexing.cu)
     cuda_add_executable(tpch-q3-submit ${CUDA_SOURCE_FILES})
 
 endif()
+
+set(CPP_SOURCE_FILES tpch_q3_main_submit.cu util/log.cpp file_input_indexing.cu)
+add_executable(tpch-q3-submit-cpu ${CPP_SOURCE_FILES})
 
 install(TARGETS tpch-q3-submit DESTINATION .)
 

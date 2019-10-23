@@ -47,6 +47,7 @@ T *GetMallocPReadArrReadOnly(const char *file_name, int &file_fd, size_t arr_siz
 #ifdef USE_GPU
     char *arr = nullptr;
     CUDA_MALLOC(&arr, sizeof(char)*file_size, nullptr);
+    log_info("After malloc: %.2f s.", populate_timer.elapsed());
 #else
     auto arr = (char *) malloc(file_size);
 #endif

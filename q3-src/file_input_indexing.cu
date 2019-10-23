@@ -12,6 +12,7 @@
 #include "util/primitives/parasort_cmp.h"
 
 #define TLS_WRITE_BUFF_SIZE (1024 * 1024)
+
 #define GetIndexArr GetMallocPReadArrReadOnly
 //#define GetIndexArr GetMMAPArrReadOnly
 using namespace std;
@@ -338,7 +339,7 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
 //    cout << order_bucket_ptrs_ << endl;
     int fd;
     order_keys_ = GetIndexArr<int32_t>(order_key_path.c_str(), fd, size_of_orders_);
-    order_dates_ = GetIndexArr<uint32_t>(order_date_path.c_str(), fd, size_of_orders_);
+    order_dates_ = GetMMAPArrReadOnly<uint32_t>(order_date_path.c_str(), fd, size_of_orders_);
     log_info("Finish Order Index Loading...Not Populate Yet");
 
     // Load LineItem.

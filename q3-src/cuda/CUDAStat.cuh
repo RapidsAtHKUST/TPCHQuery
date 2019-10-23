@@ -126,9 +126,13 @@ public:
 /*Wrapper for memory malloc, need to touch the malloced memory once before using it*/
 template <typename T>
 void CUDA_MALLOC(T **addr, size_t malloc_bytes, CUDAMemStat *stat) {
+
+    int device;
+    cudaGetDevice(&device);
+
     assert(malloc_bytes > 0);
     checkCudaErrors(cudaMallocManaged((void**)addr, malloc_bytes));
-    checkCudaErrors(cudaMemPrefetchAsync(*addr,malloc_bytes, DEVICE_ID));
+    checkCudaErrors(cudaMemPrefetchAsync(*addr,malloc_bytes, device));
     if (stat)
         stat->malloc_mem_stat((unsigned long)*addr, malloc_bytes);
 }
