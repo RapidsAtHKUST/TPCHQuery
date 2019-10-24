@@ -12,6 +12,7 @@
 #include "file_loader.h"
 
 #define GetIndexArr GetMallocPReadArrReadOnlyGPU
+#define ORDER_MAX_ID (600000010)
 
 using namespace std;
 
@@ -23,6 +24,8 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
     order_keys_arr.resize(num_devices);
     item_order_keys_arr.resize(num_devices);
     item_prices_arr.resize(num_devices);
+    bmp_arr.resize(num_devices);
+    dict_arr.resize(num_devices);
 
     // Load Order.
     string order_key_path = order_path + ORDER_KEY_BIN_FILE_SUFFIX;
@@ -56,6 +59,11 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
             auto gpu_id = i;
             cudaSetDevice(gpu_id);
             order_keys_arr[gpu_id] = GetIndexArr<int32_t>(order_key_path.c_str(), fd, size_of_orders_);
+
+            auto &bmp = bmp_arr[gpu_id];
+            auto &order_pos_dict = dict_arr[gpu_id];
+            CUDA_MALLOC(&bmp, sizeof(bool) * ( ORDER_MAX_ID + 1), nullptr);
+            CUDA_MALLOC(&order_pos_dict, sizeof(uint32_t) * (ORDER_MAX_ID + 1), nullptr);
         }));
     }
 
@@ -126,6 +134,7 @@ void filterJoin(
 void evaluateWithGPU(
         vector<int32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
         vector<int32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
+        vector<bool*> bmp_arr, vector<uint32_t *> dict_arr,
         vector<double *> item_prices_arr, uint32_t order_array_view_size, int lim, int32_t &size_of_results, Result *t) {
     CUDAMemStat memstat_detail;
     CUDATimeStat timing_detail;
@@ -172,10 +181,8 @@ void evaluateWithGPU(
         log_info("After malloc acc_prices_arr: %.2f s.", timer.elapsed());
 
         /*construct the mapping*/
-        bool *bmp = nullptr;
-        uint32_t *order_pos_dict = nullptr;
-        CUDA_MALLOC(&bmp, sizeof(bool) * (max_order_id + 1), memstat);
-        CUDA_MALLOC(&order_pos_dict, sizeof(uint32_t) * (max_order_id + 1), memstat);
+        auto bmp = bmp_arr[gpu_id];
+        auto order_pos_dict = dict_arr[gpu_id];
         checkCudaErrors(cudaMemset(bmp, 0, sizeof(bool) * (max_order_id + 1)));
 
         log_info("TID: %d, Before Construction Data Structures: %.6lfs", gpu_id, timer.elapsed());

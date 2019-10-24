@@ -183,6 +183,7 @@ void evaluateWithCPU(
 void evaluateWithGPU(
         vector<int32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
         vector<int32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
+        vector<bool*> bmp_arr, vector<uint32_t *> dict_arr,
         vector<double *> item_prices_arr, uint32_t order_array_view_size, int lim, int32_t &size_of_results, Result *t);
 
 void IndexHelper::Query(string category, string order_date, string ship_date, int limit) {
@@ -223,6 +224,7 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
     evaluateWithGPU(
             order_keys_arr, order_bucket_ptr_beg, order_bucket_ptr_end,
             item_order_keys_arr, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
+            bmp_arr,  dict_arr,
             item_prices_arr, order_array_view_size, limit, size_of_results, results);
 #else
     evaluateWithCPU(

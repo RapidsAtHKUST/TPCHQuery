@@ -40,6 +40,10 @@ class IndexHelper {
     vector<int32_t*> order_keys_arr;
     vector<int32_t*> item_order_keys_arr;
     vector<double*> item_prices_arr;
+
+    vector<bool*> bmp_arr;
+    vector<uint32_t *> dict_arr;
+
 public:
     IndexHelper(string order_path, string line_item_path);
 
