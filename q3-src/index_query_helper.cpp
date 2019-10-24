@@ -181,9 +181,9 @@ void evaluateWithCPU(
 }
 
 void evaluateWithGPU(
-        int32_t *order_keys_, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
-        int32_t *item_order_keys_, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
-        double *item_prices_, uint32_t order_array_view_size, int lim, int32_t &size_of_results, Result *t);
+        vector<int32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
+        vector<int32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
+        vector<double *> item_prices_arr, uint32_t order_array_view_size, int lim, int32_t &size_of_results, Result *t);
 
 void IndexHelper::Query(string category, string order_date, string ship_date, int limit) {
     uint32_t o_date = ConvertDateToBucketID(order_date.c_str());
@@ -213,7 +213,7 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
     // Join & Aggregate.
     auto results = (Result *) malloc(sizeof(Result) * order_array_view_size);
     int32_t size_of_results = 0;
-    log_info("%d", order_keys_[order_bucket_ptrs_[o_bucket_beg]]);
+    log_info("%d", order_keys_arr[0][order_bucket_ptrs_[o_bucket_beg]]);
 
     Timer timer;
     auto order_bucket_ptr_beg = order_bucket_ptrs_[o_bucket_beg];
@@ -221,9 +221,9 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
 
 #ifdef USE_GPU
     evaluateWithGPU(
-            order_keys_, order_bucket_ptr_beg, order_bucket_ptr_end,
-            item_order_keys_, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
-            item_prices_, order_array_view_size, limit, size_of_results, results);
+            order_keys_arr, order_bucket_ptr_beg, order_bucket_ptr_end,
+            item_order_keys_arr, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
+            item_prices_arr, order_array_view_size, limit, size_of_results, results);
 #else
     evaluateWithCPU(
             order_keys_, order_bucket_ptr_beg, order_bucket_ptr_end,
@@ -237,7 +237,7 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
         date[DATE_LEN] = '\0';
         ConvertBucketIDToDate(date, order_dates_[results[i].order_offset]);
         printf("%d|%s|%.2lf\n",
-               order_keys_[results[i].order_offset], date, results[i].price);
+               order_keys_arr[0][results[i].order_offset], date, results[i].price);
     }
     log_info("Query Time: %.6lfs", timer.elapsed());
 }

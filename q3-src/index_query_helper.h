@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "config.h"
 #include "file_parser.h"
@@ -34,6 +35,11 @@ class IndexHelper {
     vector<uint32_t> item_bucket_ptrs_;
     int32_t *item_order_keys_ = nullptr;
     double *item_prices_ = nullptr;
+
+    //vectors for multi-GPU
+    vector<int32_t*> order_keys_arr;
+    vector<int32_t*> item_order_keys_arr;
+    vector<double*> item_prices_arr;
 public:
     IndexHelper(string order_path, string line_item_path);
 

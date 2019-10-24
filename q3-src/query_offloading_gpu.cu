@@ -1,5 +1,7 @@
 #include <fstream>
+#include <vector>
 
+#include "util/thread_pool.h"
 #include "index_query_helper.h"
 
 #include "cuda/primitives.cuh"
@@ -14,6 +16,14 @@
 using namespace std;
 
 IndexHelper::IndexHelper(string order_path, string line_item_path) {
+    auto num_devices = 1;
+    cudaGetDeviceCount(&num_devices);
+    log_info("Number of GPU devices: %d.", num_devices);
+
+    order_keys_arr.resize(num_devices);
+    item_order_keys_arr.resize(num_devices);
+    item_prices_arr.resize(num_devices);
+
     // Load Order.
     string order_key_path = order_path + ORDER_KEY_BIN_FILE_SUFFIX;
     string order_date_path = order_path + ORDER_DATE_BIN_FILE_SUFFIX;
@@ -36,7 +46,19 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
              order_second_level_range_, order_num_buckets_, order_bucket_ptrs_.size(), size_of_orders_);
 //    cout << order_bucket_ptrs_ << endl;
     int fd;
-    order_keys_ = GetIndexArr<int32_t>(order_key_path.c_str(), fd, size_of_orders_);
+
+    ThreadPool pool(num_devices);
+    vector<future<void>> futures;
+
+    for(auto i = 0; i < num_devices; i++) {
+        futures.emplace_back(pool.enqueue([=](){
+            int fd;
+            auto gpu_id = i;
+            cudaSetDevice(gpu_id);
+            order_keys_arr[gpu_id] = GetIndexArr<int32_t>(order_key_path.c_str(), fd, size_of_orders_);
+        }));
+    }
+
     order_dates_ = GetMMAPArrReadOnly<uint32_t>(order_date_path.c_str(), fd, size_of_orders_);
     log_info("Finish Order Index Loading...Not Populate Yet");
 
@@ -52,8 +74,20 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
     size_of_items_ = item_bucket_ptrs_.back();
     log_info("%d, %d, %d, %zu, %d", min_ship_date_, max_ship_date_, item_num_buckets_, item_bucket_ptrs_.size(),
              size_of_items_);
-    item_order_keys_ = GetIndexArr<int32_t>(item_order_id_path.c_str(), fd, size_of_items_);
-    item_prices_ = GetIndexArr<double>(item_price_path.c_str(), fd, size_of_items_);
+
+    for(auto i = 0; i < num_devices; i++) {
+        futures.emplace_back(pool.enqueue([=](){
+            int fd = 0;
+            auto gpu_id = i;
+            cudaSetDevice(gpu_id);
+            item_order_keys_arr[gpu_id] = GetIndexArr<int32_t>(item_order_id_path.c_str(), fd, size_of_items_);
+            item_prices_arr[gpu_id] = GetIndexArr<double>(item_price_path.c_str(), fd, size_of_items_);
+        }));
+    }
+    for(auto &future: futures) {
+        future.get();
+    }
+
     log_info("Finish LineItem Loading...Not Populate Yet");
 }
 
@@ -90,44 +124,99 @@ void filterJoin(
 }
 
 void evaluateWithGPU(
-        int32_t *order_keys_, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
-        int32_t *item_order_keys_, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
-        double *item_prices_, uint32_t order_array_view_size, int lim, int32_t &size_of_results, Result *t) {
+        vector<int32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
+        vector<int32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
+        vector<double *> item_prices_arr, uint32_t order_array_view_size, int lim, int32_t &size_of_results, Result *t) {
     CUDAMemStat memstat_detail;
     CUDATimeStat timing_detail;
     auto memstat = &memstat_detail;
     auto timing = &timing_detail;
 
-    log_trace("Evaluate with GPU");
+    log_trace("Evaluate with GPUs");
+
+    auto num_devices = 1;
+    cudaGetDeviceCount(&num_devices);
+    log_info("Number of GPU devices: %d.", num_devices);
+
+    double **acc_prices_arr = nullptr;
+    CUDA_MALLOC(&acc_prices_arr, sizeof(double*) * num_devices, memstat);
+
+    auto lineitem_tuples_per_gpu = (lineitem_bucket_ptr_end - lineitem_bucket_ptr_beg + num_devices - 1) / num_devices;
 
     Timer timer;
-    int32_t max_order_id = CUBMax(&order_keys_[order_bucket_ptr_beg], (order_bucket_ptr_end - order_bucket_ptr_beg),
+
+    /*compute max_order_id with a single GPU*/
+    cudaSetDevice(0);
+    int32_t max_order_id = CUBMax(&order_keys_arr[0][order_bucket_ptr_beg], (order_bucket_ptr_end - order_bucket_ptr_beg),
                                   memstat, timing);
     log_info("BMP Size: %d", max_order_id + 1);
+    log_info("After get max_order_id: %.2f s.", timer.elapsed());
 
-    double *acc_prices = nullptr;
-    CUDA_MALLOC(&acc_prices, sizeof(double) * order_array_view_size, memstat);
-    checkCudaErrors(cudaMemset(acc_prices, 0, sizeof(double) * order_array_view_size));
+    cudaDeviceSynchronize();
 
-    /*construct the mapping*/
-    bool *bmp = nullptr;
-    uint32_t *order_pos_dict = nullptr;
-    CUDA_MALLOC(&bmp, sizeof(bool) * (max_order_id + 1), memstat);
-    CUDA_MALLOC(&order_pos_dict, sizeof(uint32_t) * (max_order_id + 1), memstat);
-    checkCudaErrors(cudaMemset(bmp, 0, sizeof(bool) * (max_order_id + 1)));
-    log_info("Before Construction Data Structures: %.6lfs", timer.elapsed());
+#pragma omp parallel num_threads(num_devices)
+    {
+        auto gpu_id = omp_get_thread_num();
+        log_info("TID: %d, BMP Size: %d", gpu_id, max_order_id + 1);
 
-    /*build the boolean filter*/
-    execKernel(buildBooleanArray, 1024, 256, timing, false,
-               order_bucket_ptr_beg, order_bucket_ptr_end,
-               order_keys_, bmp, order_pos_dict);
-    log_info("Before Aggregation: %.6lfs", timer.elapsed());
+        cudaSetDevice(gpu_id);
 
-    execKernel(filterJoin, 1024, 256, timing, false,
-               lineitem_bucket_ptr_beg, lineitem_bucket_ptr_end,
-               item_order_keys_, acc_prices, item_prices_, max_order_id, bmp, order_pos_dict);
-    log_info("Before Select: %.6lfs", timer.elapsed());
+        auto lineitem_bucket_ptr_beg_gpu = lineitem_bucket_ptr_beg + gpu_id * lineitem_tuples_per_gpu;
+        auto lineitem_bucket_ptr_end_gpu = lineitem_bucket_ptr_beg + (gpu_id+1) * lineitem_tuples_per_gpu;
+        if (lineitem_bucket_ptr_end_gpu > lineitem_bucket_ptr_end)
+            lineitem_bucket_ptr_end_gpu = lineitem_bucket_ptr_end;
+        log_info("GPU ID: %d, lineitem range: [%d, %d)", gpu_id, lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu);
 
+        CUDA_MALLOC(&acc_prices_arr[gpu_id], sizeof(double) * order_array_view_size, memstat);
+        checkCudaErrors(cudaMemset(acc_prices_arr[gpu_id], 0, sizeof(double) * order_array_view_size));
+        log_info("After malloc acc_prices_arr: %.2f s.", timer.elapsed());
+
+        /*construct the mapping*/
+        bool *bmp = nullptr;
+        uint32_t *order_pos_dict = nullptr;
+        CUDA_MALLOC(&bmp, sizeof(bool) * (max_order_id + 1), memstat);
+        CUDA_MALLOC(&order_pos_dict, sizeof(uint32_t) * (max_order_id + 1), memstat);
+        checkCudaErrors(cudaMemset(bmp, 0, sizeof(bool) * (max_order_id + 1)));
+
+        log_info("TID: %d, Before Construction Data Structures: %.6lfs", gpu_id, timer.elapsed());
+
+        /*build the boolean filter*/
+        execKernel(buildBooleanArray, 1024, 256, timing, false,
+                   order_bucket_ptr_beg, order_bucket_ptr_end,
+                   order_keys_arr[gpu_id], bmp, order_pos_dict);
+
+        log_info("TID: %d, Before Aggregation: %.6lfs", gpu_id,  timer.elapsed());
+
+
+        execKernel(filterJoin, 1024, 256, timing, false,
+                   lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu,
+                   item_order_keys_arr[gpu_id], acc_prices_arr[gpu_id], item_prices_arr[gpu_id], max_order_id, bmp, order_pos_dict);
+
+
+        log_info("TID: %d, Before Select: %.6lfs", gpu_id, timer.elapsed());
+
+//        CUDA_FREE(bmp, memstat);
+//        CUDA_FREE(order_pos_dict, memstat);
+    }
+    log_info("Parallel processing time: %.2f s.", timer.elapsed());
+
+    /*add up the acc_prices*/
+    auto iter_begin = thrust::make_counting_iterator(0u);
+    auto iter_end = thrust::make_counting_iterator(order_array_view_size);
+
+    cudaSetDevice(0);
+    for(auto i = 1; i < num_devices; i++) {
+        timingKernel(
+                thrust::transform(thrust::device, iter_begin, iter_end, acc_prices_arr[0], [=]
+                __device__(uint32_t idx) {
+                return acc_prices_arr[0][idx] + acc_prices_arr[i][idx];
+        }), timing);
+    }
+
+    auto acc_prices = acc_prices_arr[0];
+    log_info("Before processing the summarized acc_prices: %.2f s.", timer.elapsed());
+
+    /*processing the summarized acc_prices*/
     bool *flag_is_zero = nullptr;
     CUDA_MALLOC(&flag_is_zero, sizeof(bool) * order_array_view_size, memstat);
 
@@ -139,9 +228,6 @@ void evaluateWithGPU(
     CUDA_MALLOC(&order_offset, sizeof(uint32_t) * order_array_view_size, memstat);
     CUDA_MALLOC(&order_offset_filtered, sizeof(uint32_t) * order_array_view_size, memstat);
 
-    auto iter_begin = thrust::make_counting_iterator(0u);
-    auto iter_end = thrust::make_counting_iterator(order_array_view_size);
-
     thrust::counting_iterator<uint32_t> iter(order_bucket_ptr_beg);
     timingKernel(
             thrust::copy(iter, iter + order_array_view_size, order_offset), timing);
@@ -149,8 +235,7 @@ void evaluateWithGPU(
     /*construct the boolean filter*/
     timingKernel(
             thrust::transform(thrust::device, iter_begin, iter_end, flag_is_zero, [=]
-            __device__(uint32_t
-            idx) {
+            __device__(uint32_t idx) {
             return acc_prices[idx] > 0.0;
     }), timing);
 
@@ -160,7 +245,6 @@ void evaluateWithGPU(
 
     CUDA_FREE(flag_is_zero, memstat);
     CUDA_FREE(order_offset, memstat);
-    CUDA_FREE(acc_prices, memstat);
 
     log_info("Non Zeros: %zu", size_of_results);
 
@@ -178,19 +262,21 @@ void evaluateWithGPU(
     cub::DeviceRadixSort::SortPairsDescending(d_temp_storage, temp_storage_bytes, acc_price_filtered, acc_price_sorted,
                                               order_offset_filtered, order_offset_sorted, size_of_results);
     cudaDeviceSynchronize();
+    CUDA_FREE(d_temp_storage, memstat);
 
     for (auto i = 0; i < lim; i++) {
         t[i].price = acc_price_sorted[i];
         t[i].order_offset = order_offset_sorted[i];
     }
 
-    CUDA_FREE(d_temp_storage, memstat);
-    CUDA_FREE(bmp, memstat);
-    CUDA_FREE(order_pos_dict, memstat);
     CUDA_FREE(acc_price_filtered, memstat);
     CUDA_FREE(order_offset_filtered, memstat);
     CUDA_FREE(acc_price_sorted, memstat);
     CUDA_FREE(order_offset_sorted, memstat);
+
+    for(auto i = 0; i < num_devices; i++)
+        CUDA_FREE(acc_prices_arr[i], memstat);
+    CUDA_FREE(acc_prices_arr, memstat);
 
     log_info("Maximal device memory demanded: %ld bytes.", memstat->get_max_use());
     log_info("Unfreed device memory size: %ld bytes.", memstat->get_cur_use());
