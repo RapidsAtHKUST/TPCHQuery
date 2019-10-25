@@ -138,6 +138,15 @@ void CUDA_MALLOC(T **addr, size_t malloc_bytes, CUDAMemStat *stat) {
 }
 
 template <typename T>
+void CUDA_MALLOC_CPU(T **addr, size_t malloc_bytes, CUDAMemStat *stat) {
+    assert(malloc_bytes > 0);
+    checkCudaErrors(cudaMallocManaged((void**)addr, malloc_bytes));
+    checkCudaErrors(cudaMemPrefetchAsync(*addr,malloc_bytes, -1));
+    if (stat)
+        stat->malloc_mem_stat((unsigned long)*addr, malloc_bytes);
+}
+
+template <typename T>
 void CUDA_FREE(T *addr, CUDAMemStat *stat) {
     checkCudaErrors(cudaFree(addr));
     stat->delete_mem_stat((unsigned long)addr);

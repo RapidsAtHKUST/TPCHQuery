@@ -26,6 +26,14 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
     item_prices_arr.resize(num_devices);
     bmp_arr.resize(num_devices);
     dict_arr.resize(num_devices);
+    acc_prices_arr.resize(num_devices);
+
+#pragma omp parallel num_threads(num_devices)
+    {
+        auto gpu_id = omp_get_thread_num();
+        cudaSetDevice(gpu_id);
+        CUDA_MALLOC(&acc_prices_arr[gpu_id], sizeof(double) * MAX_NUM_ORDERS, nullptr);
+    }
 
     // Load Order.
     string order_key_path = order_path + ORDER_KEY_BIN_FILE_SUFFIX;
@@ -50,7 +58,7 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
 //    cout << order_bucket_ptrs_ << endl;
     int fd;
 
-    ThreadPool pool(num_devices);
+    ThreadPool pool(num_devices*2);
     vector<future<void>> futures;
 
     for(auto i = 0; i < num_devices; i++) {
@@ -131,7 +139,7 @@ void filterJoin(
     }
 }
 
-void evaluateWithGPU(
+void IndexHelper::evaluateWithGPU(
         vector<int32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
         vector<int32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
         vector<bool*> bmp_arr, vector<uint32_t *> dict_arr,
@@ -147,8 +155,8 @@ void evaluateWithGPU(
     cudaGetDeviceCount(&num_devices);
     log_info("Number of GPU devices: %d.", num_devices);
 
-    double **acc_prices_arr = nullptr;
-    CUDA_MALLOC(&acc_prices_arr, sizeof(double*) * num_devices, memstat);
+//    double **acc_prices_arr = nullptr;
+//    CUDA_MALLOC(&acc_prices_arr, sizeof(double*) * num_devices, memstat);
 
     auto lineitem_tuples_per_gpu = (lineitem_bucket_ptr_end - lineitem_bucket_ptr_beg + num_devices - 1) / num_devices;
 
@@ -176,7 +184,7 @@ void evaluateWithGPU(
             lineitem_bucket_ptr_end_gpu = lineitem_bucket_ptr_end;
         log_info("GPU ID: %d, lineitem range: [%d, %d)", gpu_id, lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu);
 
-        CUDA_MALLOC(&acc_prices_arr[gpu_id], sizeof(double) * order_array_view_size, memstat);
+//        CUDA_MALLOC(&acc_prices_arr[gpu_id], sizeof(double) * order_array_view_size, memstat);
         checkCudaErrors(cudaMemset(acc_prices_arr[gpu_id], 0, sizeof(double) * order_array_view_size));
         log_info("After malloc acc_prices_arr: %.2f s.", timer.elapsed());
 
@@ -205,6 +213,7 @@ void evaluateWithGPU(
 //        CUDA_FREE(bmp, memstat);
 //        CUDA_FREE(order_pos_dict, memstat);
     }
+
     log_info("Parallel processing time: %.2f s.", timer.elapsed());
 
     /*add up the acc_prices*/
@@ -212,11 +221,14 @@ void evaluateWithGPU(
     auto iter_end = thrust::make_counting_iterator(order_array_view_size);
 
     cudaSetDevice(0);
+
     for(auto i = 1; i < num_devices; i++) {
+        double *acc_prices_0 = acc_prices_arr[0];
+        double *acc_prices_i = acc_prices_arr[i];
         timingKernel(
                 thrust::transform(thrust::device, iter_begin, iter_end, acc_prices_arr[0], [=]
                 __device__(uint32_t idx) {
-                return acc_prices_arr[0][idx] + acc_prices_arr[i][idx];
+                return acc_prices_0[idx] + acc_prices_i[idx];
         }), timing);
     }
 
@@ -250,8 +262,8 @@ void evaluateWithGPU(
     size_of_results = CUBSelect(acc_prices, acc_price_filtered, flag_is_zero, order_array_view_size, memstat, timing);
     CUBSelect(order_offset, order_offset_filtered, flag_is_zero, order_array_view_size, memstat, timing);
 
-    CUDA_FREE(flag_is_zero, memstat);
-    CUDA_FREE(order_offset, memstat);
+//    CUDA_FREE(flag_is_zero, memstat);
+//    CUDA_FREE(order_offset, memstat);
 
     log_info("Non Zeros: %zu", size_of_results);
 
@@ -269,21 +281,21 @@ void evaluateWithGPU(
     cub::DeviceRadixSort::SortPairsDescending(d_temp_storage, temp_storage_bytes, acc_price_filtered, acc_price_sorted,
                                               order_offset_filtered, order_offset_sorted, size_of_results);
     cudaDeviceSynchronize();
-    CUDA_FREE(d_temp_storage, memstat);
+//    CUDA_FREE(d_temp_storage, memstat);
 
     for (auto i = 0; i < lim; i++) {
         t[i].price = acc_price_sorted[i];
         t[i].order_offset = order_offset_sorted[i];
     }
 
-    CUDA_FREE(acc_price_filtered, memstat);
-    CUDA_FREE(order_offset_filtered, memstat);
-    CUDA_FREE(acc_price_sorted, memstat);
-    CUDA_FREE(order_offset_sorted, memstat);
-
-    for(auto i = 0; i < num_devices; i++)
-        CUDA_FREE(acc_prices_arr[i], memstat);
-    CUDA_FREE(acc_prices_arr, memstat);
+//    CUDA_FREE(acc_price_filtered, memstat);
+//    CUDA_FREE(order_offset_filtered, memstat);
+//    CUDA_FREE(acc_price_sorted, memstat);
+//    CUDA_FREE(order_offset_sorted, memstat);
+//
+//    for(auto i = 0; i < num_devices; i++)
+//        CUDA_FREE(acc_prices_arr[i], memstat);
+//    CUDA_FREE(acc_prices_arr, memstat);
 
     log_info("Maximal device memory demanded: %ld bytes.", memstat->get_max_use());
     log_info("Unfreed device memory size: %ld bytes.", memstat->get_cur_use());
