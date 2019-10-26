@@ -117,7 +117,7 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
                                        Order order = orders[it];
                                        return order.customer_key * second_level_range
                                               + order.order_date_bucket - min_order_date;
-                                   }, io_threads, &timer);
+                                   }, &timer);
             assert(order_bucket_ptrs_[num_buckets] == MAX_NUM_ORDERS);
             free(local_buf);
             free(local_buffer);
@@ -224,7 +224,7 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
                                    cur_write_off_item, bucket_ptrs_item_, size_of_items_, num_buckets,
                                    [items, min_ship_date](uint32_t it) {
                                        return items[it].ship_date_bucket - min_ship_date;
-                                   }, io_threads, &timer);
+                                   }, &timer);
             free(local_buf);
             free(local_buffer);
         }

@@ -114,9 +114,7 @@ void evaluateWithCPU(
 
 #pragma omp parallel
     {
-        int tid = omp_get_thread_num();
-        int num_threads = omp_get_num_threads();
-        MemSetOMP(acc_prices, 0, order_array_view_size, tid, num_threads);
+        MemSetOMP(acc_prices, 0, order_array_view_size);
 //#pragma omp for
 //        for (size_t i = 0; i < order_array_view_size; i++) {
 //            assert(acc_prices[i] == 0);
@@ -131,7 +129,7 @@ void evaluateWithCPU(
             bmp = (bool *) malloc(sizeof(bool) * (max_order_id + 1));
             order_pos_dict = (uint32_t *) malloc(sizeof(uint32_t) * (max_order_id + 1));
         }
-        MemSetOMP(bmp, 0, (max_order_id + 1), tid, num_threads);
+        MemSetOMP(bmp, 0, (max_order_id + 1));
 #pragma omp single
         log_info("Before Construction Data Structures: %.6lfs", timer.elapsed());
 #pragma omp for
@@ -153,7 +151,7 @@ void evaluateWithCPU(
         log_info("Before Select: %.6lfs", timer.elapsed());
         FlagPrefixSumOMP(histogram, relative_off, order_array_view_size, [acc_prices](uint32_t it) {
             return acc_prices[it] == 0;
-        }, num_threads);
+        });
 #pragma omp for reduction(+:size_of_results)
         for (uint32_t i = 0u; i < order_array_view_size; i++) {
             if (acc_prices[i] != 0) {
