@@ -181,6 +181,8 @@ void evaluateWithCPU(
 }
 
 void IndexHelper::Query(string category, string order_date, string ship_date, int limit) {
+    printf("l_orderkey|o_orderdate|revenue\n");
+
     uint32_t o_date = ConvertDateToBucketID(order_date.c_str());
     uint32_t s_date = ConvertDateToBucketID(ship_date.c_str());
     int category_id = LinearProbe(category_table_, category.c_str(), 0, category.size());
@@ -208,8 +210,9 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
     // Join & Aggregate.
     auto results = (Result *) malloc(sizeof(Result) * order_array_view_size);
     int32_t size_of_results = 0;
+#ifdef USE_GPU
     log_info("%d", order_keys_arr[0][order_bucket_ptrs_[o_bucket_beg]]);
-
+#endif
     Timer timer;
     auto order_bucket_ptr_beg = order_bucket_ptrs_[o_bucket_beg];
     auto order_bucket_ptr_end = order_bucket_ptrs_[o_bucket_end];
@@ -227,7 +230,7 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
             item_prices_, order_array_view_size, limit, size_of_results, results);
 #endif
 
-    printf("l_orderkey|o_orderdate|revenue\n");
+#ifdef USE_GPU
     for (auto i = 0; i < min<int32_t>(size_of_results, limit); i++) {
         char date[DATE_LEN + 1];
         date[DATE_LEN] = '\0';
@@ -235,5 +238,14 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
         printf("%d|%s|%.2lf\n",
                order_keys_arr[0][results[i].order_offset], date, results[i].price);
     }
+#else
+    for (auto i = 0; i < min<int32_t>(size_of_results, limit); i++) {
+        char date[DATE_LEN + 1];
+        date[DATE_LEN] = '\0';
+        ConvertBucketIDToDate(date, order_dates_[results[i].order_offset]);
+        printf("%d|%s|%.2lf\n",
+               order_keys_[results[i].order_offset], date, results[i].price);
+    }
+#endif
     log_info("Query Time: %.6lfs", timer.elapsed());
 }
