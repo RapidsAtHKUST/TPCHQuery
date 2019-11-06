@@ -11,11 +11,11 @@
 #include "util/archive.h"
 #include "util/pretty_print.h"
 #include "util/primitives/parasort_cmp.h"
-
+#include "util/primitives/boolarray.h"
 using namespace std;
 
 #ifndef USE_GPU
-#define GetIndexArr GetMallocPReadArrReadOnly
+#define GetIndexArr GetMMAPArrReadOnly
 //#define GetIndexArr GetMMAPArrReadOnly
 IndexHelper::IndexHelper(string order_path, string line_item_path) {
     // Load Order.
@@ -106,7 +106,8 @@ void evaluateWithCPU(
     Timer timer;
     auto relative_off = (uint32_t *) malloc(sizeof(uint32_t) * order_array_view_size);
     uint32_t *order_pos_dict;
-    bool *bmp;
+//    bool *bmp;
+    BoolArray<uint64_t> bmp;
     uint32_t max_order_id = 0;
     vector<uint32_t> histogram;
 
@@ -126,16 +127,18 @@ void evaluateWithCPU(
 #pragma omp single
         {
             log_info("BMP Size: %u", max_order_id + 1);
-            bmp = (bool *) malloc(sizeof(bool) * (max_order_id + 1));
+//            bmp = (bool *) malloc(sizeof(bool) * (max_order_id + 1));
+            bmp = BoolArray<uint64_t >(max_order_id+1);
             order_pos_dict = (uint32_t *) malloc(sizeof(uint32_t) * (max_order_id + 1));
         }
-        MemSetOMP(bmp, 0, (max_order_id + 1));
+//        MemSetOMP(bmp, 0, (max_order_id + 1));
 #pragma omp single
         log_info("Before Construction Data Structures: %.6lfs", timer.elapsed());
 #pragma omp for
         for (auto i = order_bucket_ptr_beg; i < order_bucket_ptr_end; i++) {
             auto order_key = order_keys_[i];
-            bmp[order_key] = true;
+//            bmp[order_key] = true;
+            bmp.set_atomic(order_key);
             order_pos_dict[order_key] = i - order_bucket_ptr_beg;
         }
 #pragma omp single
@@ -162,7 +165,7 @@ void evaluateWithCPU(
         }
     }
     free(order_pos_dict);
-    free(bmp);
+//    free(bmp);
     free(acc_prices);
     free(relative_off);
     log_info("Non Zeros: %zu", size_of_results);
