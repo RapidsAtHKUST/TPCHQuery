@@ -31,20 +31,20 @@ inline size_t LinearSearch(const char *str, size_t i, size_t len, char token) {
     return i;
 }
 
-inline int32_t StrToInt(const char *str, size_t beg, size_t end) {
-    int sum = str[beg] - '0';
+inline uint32_t StrToInt(const char *str, size_t beg, size_t end) {
+    uint32_t sum = str[beg] - '0';
     for (auto i = beg + 1; i < end; i++) {
-        sum = sum * 10 + (str[i] - '0');
+        sum = sum * 10u + (str[i] - '0');
     }
     return sum;
 }
 
-inline int32_t StrToIntOnline(const char *str, size_t beg, size_t &end, char token) {
+inline uint32_t StrToIntOnline(const char *str, size_t beg, size_t &end, char token) {
     if (beg == end) { return 0; }
-    int sum = str[beg] - '0';
+    uint32_t sum = str[beg] - '0';
     auto i = beg + 1;
     for (; i < end && str[i] != token; i++) {
-        sum = sum * 10 + (str[i] - '0');
+        sum = sum * 10u + (str[i] - '0');
     }
     end = i;
     return sum;

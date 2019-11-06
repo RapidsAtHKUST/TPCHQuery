@@ -12,8 +12,8 @@
 #define TLS_WRITE_BUFF_SIZE (1024 * 1024)
 
 void FileInputHelper::ParseCustomerInputFile(const char *customer_path) {
-    int32_t max_id = INT32_MIN;
-    int32_t min_id = INT32_MAX;
+    uint32_t max_id = 0;
+    uint32_t min_id = UINT32_MAX;
     auto customers = (Customer *) malloc(sizeof(Customer) * MAX_NUM_CUSTOMERS);
     volatile uint32_t size_of_customers = 0;
     {

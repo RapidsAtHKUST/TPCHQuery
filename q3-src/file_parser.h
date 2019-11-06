@@ -19,18 +19,18 @@
 using namespace std;
 
 struct Customer {
-    int32_t key;
+    uint32_t key;
     int32_t category;
 };
 
 struct Order {
-    int32_t key;
-    int32_t customer_key;
+    uint32_t key;
+    uint32_t customer_key;
     uint32_t order_date_bucket;
 };
 
 struct LineItem {
-    int32_t order_key;
+    uint32_t order_key;
     uint32_t ship_date_bucket;
     double price;
 };
@@ -40,7 +40,7 @@ using OrderBuffer = LocalWriteBuffer<Order, uint32_t>;
 using LineItemBuffer = LocalWriteBuffer<LineItem, uint32_t>;
 
 inline void ParseCustomer(ParsingTask task, LockFreeLinearTable &table, ConsumerBuffer &local_write_buffer,
-                          int &max_id, int &min_id) {
+                          uint32_t &max_id, uint32_t &min_id) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
 
@@ -49,10 +49,10 @@ inline void ParseCustomer(ParsingTask task, LockFreeLinearTable &table, Consumer
 #ifdef NAIVE_PARSING
         size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return;
-        int32_t id = StrToInt(buf, i, end);
+        uint32_t id = StrToInt(buf, i, end);
 #else
         size_t end = task.size_;
-        int32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
+        uint32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
         if (end == task.size_)return;
 #endif
         i = end + 1;
@@ -81,10 +81,10 @@ inline void ParseOrder(ParsingTask task, OrderBuffer &local_write_buffer,
 #ifdef NAIVE_PARSING
         size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return;
-        int32_t id = StrToInt(buf, i, end);
+        uint32_t id = StrToInt(buf, i, end);
 #else
         size_t end = task.size_;
-        int32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
+        uint32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
         if (end == task.size_)return;
 #endif
         i = end + 1;
@@ -94,10 +94,10 @@ inline void ParseOrder(ParsingTask task, OrderBuffer &local_write_buffer,
 #ifdef NAIVE_PARSING
         end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return;
-        int32_t cid = StrToInt(buf, i, end);
+        uint32_t cid = StrToInt(buf, i, end);
 #else
         end = task.size_;
-        int32_t cid = StrToIntOnline(buf, i, end, COL_SPLITTER);
+        uint32_t cid = StrToIntOnline(buf, i, end, COL_SPLITTER);
         if (end == task.size_)return;
 #endif
         i = end + 1;
@@ -124,10 +124,10 @@ inline void ParseLineItem(ParsingTask task, LineItemBuffer &local_write_buffer,
 #ifdef NAIVE_PARSING
         size_t end = LinearSearch(buf, i, task.size_, COL_SPLITTER);
         if (end == task.size_)return;
-        int32_t id = StrToInt(buf, i, end);
+        uint32_t id = StrToInt(buf, i, end);
 #else
         size_t end = task.size_;
-        int32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
+        uint32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
         if (end == task.size_)return;
 #endif
         i = end + 1;
