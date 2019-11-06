@@ -12,7 +12,6 @@
 #include "file_loader.h"
 
 #define GetIndexArr GetMallocPReadArrReadOnlyGPU
-#define ORDER_MAX_ID (600000010)
 
 using namespace std;
 
@@ -66,7 +65,7 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
             int fd;
             auto gpu_id = i;
             cudaSetDevice(gpu_id);
-            order_keys_arr[gpu_id] = GetIndexArr<int32_t>(order_key_path.c_str(), fd, size_of_orders_);
+            order_keys_arr[gpu_id] = GetIndexArr<uint32_t>(order_key_path.c_str(), fd, size_of_orders_);
 
             auto &bmp = bmp_arr[gpu_id];
             auto &order_pos_dict = dict_arr[gpu_id];
@@ -88,7 +87,7 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
         ar >> min_ship_date_ >> max_ship_date_ >> item_num_buckets_ >> item_bucket_ptrs_;
     }
     size_of_items_ = item_bucket_ptrs_.back();
-    log_info("%d, %d, %d, %zu, %d", min_ship_date_, max_ship_date_, item_num_buckets_, item_bucket_ptrs_.size(),
+    log_info("%d, %d, %d, %zu, %u", min_ship_date_, max_ship_date_, item_num_buckets_, item_bucket_ptrs_.size(),
              size_of_items_);
 
     for(auto i = 0; i < num_devices; i++) {
@@ -96,7 +95,7 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
             int fd = 0;
             auto gpu_id = i;
             cudaSetDevice(gpu_id);
-            item_order_keys_arr[gpu_id] = GetIndexArr<int32_t>(item_order_id_path.c_str(), fd, size_of_items_);
+            item_order_keys_arr[gpu_id] = GetIndexArr<uint32_t>(item_order_id_path.c_str(), fd, size_of_items_);
             item_prices_arr[gpu_id] = GetIndexArr<double>(item_price_path.c_str(), fd, size_of_items_);
         }));
     }
@@ -110,7 +109,7 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
 __global__
 void buildBooleanArray(
         uint32_t start_pos, uint32_t end_pos,
-        int32_t *order_keys_, bool *bmp, uint32_t *order_pos_dict) {
+        uint32_t *order_keys_, bool *bmp, uint32_t *order_pos_dict) {
     auto gtid = threadIdx.x + blockDim.x * blockIdx.x + start_pos;
     auto gtnum = blockDim.x * gridDim.x;
 
@@ -125,7 +124,7 @@ void buildBooleanArray(
 __global__
 void filterJoin(
         uint32_t start_pos, uint32_t end_pos,
-        int32_t *item_order_keys_, double *acc_prices, double *item_prices_, int32_t max_order_id,
+        uint32_t *item_order_keys_, double *acc_prices, double *item_prices_, uint32_t max_order_id,
         bool *bmp, uint32_t *order_pos_dict) {
     auto gtid = threadIdx.x + blockDim.x * blockIdx.x + start_pos;
     auto gtnum = blockDim.x * gridDim.x;
@@ -140,10 +139,10 @@ void filterJoin(
 }
 
 void IndexHelper::evaluateWithGPU(
-        vector<int32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
-        vector<int32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
+        vector<uint32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
+        vector<uint32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
         vector<bool*> bmp_arr, vector<uint32_t *> dict_arr,
-        vector<double *> item_prices_arr, uint32_t order_array_view_size, int lim, int32_t &size_of_results, Result *t) {
+        vector<double *> item_prices_arr, uint32_t order_array_view_size, int lim, uint32_t &size_of_results, Result *t) {
     CUDAMemStat memstat_detail;
     CUDATimeStat timing_detail;
     auto memstat = &memstat_detail;
@@ -164,17 +163,17 @@ void IndexHelper::evaluateWithGPU(
 
     /*compute max_order_id with a single GPU*/
     cudaSetDevice(0);
-    int32_t max_order_id = CUBMax(&order_keys_arr[0][order_bucket_ptr_beg], (order_bucket_ptr_end - order_bucket_ptr_beg),
+    uint32_t max_order_id = CUBMax(&order_keys_arr[0][order_bucket_ptr_beg], (order_bucket_ptr_end - order_bucket_ptr_beg),
                                   memstat, timing);
-    log_info("BMP Size: %d", max_order_id + 1);
+    log_info("BMP Size: %u", max_order_id + 1);
     log_info("After get max_order_id: %.2f s.", timer.elapsed());
 
-    cudaDeviceSynchronize();
+    checkCudaErrors(cudaDeviceSynchronize());
 
 #pragma omp parallel num_threads(num_devices)
     {
         auto gpu_id = omp_get_thread_num();
-        log_info("TID: %d, BMP Size: %d", gpu_id, max_order_id + 1);
+        log_info("TID: %d, BMP Size: %u", gpu_id, max_order_id + 1);
 
         cudaSetDevice(gpu_id);
 
@@ -182,7 +181,7 @@ void IndexHelper::evaluateWithGPU(
         auto lineitem_bucket_ptr_end_gpu = lineitem_bucket_ptr_beg + (gpu_id+1) * lineitem_tuples_per_gpu;
         if (lineitem_bucket_ptr_end_gpu > lineitem_bucket_ptr_end)
             lineitem_bucket_ptr_end_gpu = lineitem_bucket_ptr_end;
-        log_info("GPU ID: %d, lineitem range: [%d, %d)", gpu_id, lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu);
+        log_info("GPU ID: %d, lineitem range: [%u, %u)", gpu_id, lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu);
 
 //        CUDA_MALLOC(&acc_prices_arr[gpu_id], sizeof(double) * order_array_view_size, memstat);
         checkCudaErrors(cudaMemset(acc_prices_arr[gpu_id], 0, sizeof(double) * order_array_view_size));

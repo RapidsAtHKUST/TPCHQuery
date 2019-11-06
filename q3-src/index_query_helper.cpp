@@ -40,7 +40,7 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
              order_second_level_range_, order_num_buckets_, order_bucket_ptrs_.size(), size_of_orders_);
 //    cout << order_bucket_ptrs_ << endl;
     int fd;
-    order_keys_ = GetIndexArr<int32_t>(order_key_path.c_str(), fd, size_of_orders_);
+    order_keys_ = GetIndexArr<uint32_t>(order_key_path.c_str(), fd, size_of_orders_);
     order_dates_ = GetMMAPArrReadOnly<uint32_t>(order_date_path.c_str(), fd, size_of_orders_);
     log_info("Finish Order Index Loading...Not Populate Yet");
 
@@ -54,9 +54,9 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
         ar >> min_ship_date_ >> max_ship_date_ >> item_num_buckets_ >> item_bucket_ptrs_;
     }
     size_of_items_ = item_bucket_ptrs_.back();
-    log_info("%d, %d, %d, %zu, %d", min_ship_date_, max_ship_date_, item_num_buckets_, item_bucket_ptrs_.size(),
+    log_info("%d, %d, %d, %zu, %u", min_ship_date_, max_ship_date_, item_num_buckets_, item_bucket_ptrs_.size(),
              size_of_items_);
-    item_order_keys_ = GetIndexArr<int32_t>(item_order_id_path.c_str(), fd, size_of_items_);
+    item_order_keys_ = GetIndexArr<uint32_t>(item_order_id_path.c_str(), fd, size_of_items_);
     item_prices_ = GetIndexArr<double>(item_price_path.c_str(), fd, size_of_items_);
     log_info("Finish LineItem Loading...Not Populate Yet");
 }
@@ -97,17 +97,17 @@ inline double __sync_fetch_and_add_double(double *address, double val) {
 }
 
 void evaluateWithCPU(
-        int32_t *order_keys_, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
-        int32_t *item_order_keys_, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
+        uint32_t *order_keys_, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
+        uint32_t *item_order_keys_, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
         double *item_prices_, uint32_t order_array_view_size, int lim,
-        int32_t &size_of_results, Result *results) {
+        uint32_t &size_of_results, Result *results) {
     log_trace("Evaluate with CPU");
 
     Timer timer;
     auto relative_off = (uint32_t *) malloc(sizeof(uint32_t) * order_array_view_size);
     uint32_t *order_pos_dict;
     bool *bmp;
-    int32_t max_order_id = 0;
+    uint32_t max_order_id = 0;
     vector<uint32_t> histogram;
 
     auto acc_prices = (double *) malloc(sizeof(double) * order_array_view_size);
@@ -125,7 +125,7 @@ void evaluateWithCPU(
         }
 #pragma omp single
         {
-            log_info("BMP Size: %d", max_order_id + 1);
+            log_info("BMP Size: %u", max_order_id + 1);
             bmp = (bool *) malloc(sizeof(bool) * (max_order_id + 1));
             order_pos_dict = (uint32_t *) malloc(sizeof(uint32_t) * (max_order_id + 1));
         }
@@ -201,15 +201,15 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
              o_bucket_beg, o_bucket_end, item_bucket_beg, item_bucket_end);
     auto order_array_view_size = order_bucket_ptrs_[o_bucket_end] - order_bucket_ptrs_[o_bucket_beg];
     auto item_array_view_size = item_bucket_ptrs_[item_bucket_end] - item_bucket_ptrs_[item_bucket_beg];
-    log_info("[%d, %d): %d, [%d, %d): %d", order_bucket_ptrs_[o_bucket_beg], order_bucket_ptrs_[o_bucket_end],
+    log_info("[%u, %u): %u, [%u %u): %u", order_bucket_ptrs_[o_bucket_beg], order_bucket_ptrs_[o_bucket_end],
              order_array_view_size, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
              item_array_view_size);
 
     // Join & Aggregate.
     auto results = (Result *) malloc(sizeof(Result) * order_array_view_size);
-    int32_t size_of_results = 0;
+    uint32_t size_of_results = 0;
 #ifdef USE_GPU
-    log_info("%d", order_keys_arr[0][order_bucket_ptrs_[o_bucket_beg]]);
+    log_info("%u", order_keys_arr[0][order_bucket_ptrs_[o_bucket_beg]]);
 #endif
     Timer timer;
     auto order_bucket_ptr_beg = order_bucket_ptrs_[o_bucket_beg];
@@ -233,7 +233,7 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
         char date[DATE_LEN + 1];
         date[DATE_LEN] = '\0';
         ConvertBucketIDToDate(date, order_dates_[results[i].order_offset]);
-        printf("%d|%s|%.2lf\n",
+        printf("%u|%s|%.2lf\n",
                order_keys_arr[0][results[i].order_offset], date, results[i].price);
     }
 #else
@@ -241,7 +241,7 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
         char date[DATE_LEN + 1];
         date[DATE_LEN] = '\0';
         ConvertBucketIDToDate(date, order_dates_[results[i].order_offset]);
-        printf("%d|%s|%.2lf\n",
+        printf("%u|%s|%.2lf\n",
                order_keys_[results[i].order_offset], date, results[i].price);
     }
 #endif

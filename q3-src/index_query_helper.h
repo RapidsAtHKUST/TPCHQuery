@@ -27,7 +27,7 @@ class IndexHelper {
 
     // Order CSR.
     vector<uint32_t> order_bucket_ptrs_;
-    int32_t *order_keys_ = nullptr;
+    uint32_t *order_keys_ = nullptr;
     uint32_t *order_dates_ = nullptr;
 
     // LineItem.
@@ -38,12 +38,12 @@ class IndexHelper {
 
     // Item CSR.
     vector<uint32_t> item_bucket_ptrs_;
-    int32_t *item_order_keys_ = nullptr;
+    uint32_t *item_order_keys_ = nullptr;
     double *item_prices_ = nullptr;
 
     //vectors for multi-GPU
-    vector<int32_t*> order_keys_arr;
-    vector<int32_t*> item_order_keys_arr;
+    vector<uint32_t*> order_keys_arr;
+    vector<uint32_t*> item_order_keys_arr;
     vector<double*> item_prices_arr;
 
 public:
@@ -56,9 +56,9 @@ public:
     vector<double*> acc_prices_arr;
 
     void evaluateWithGPU(
-            vector<int32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
-            vector<int32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
+            vector<uint32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
+            vector<uint32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
             vector<bool*> bmp_arr, vector<uint32_t *> dict_arr,
-            vector<double *> item_prices_arr, uint32_t order_array_view_size, int lim, int32_t &size_of_results, Result *t);
+            vector<double *> item_prices_arr, uint32_t order_array_view_size, int lim, uint32_t &size_of_results, Result *t);
 };
 
