@@ -3,6 +3,7 @@
 //
 
 #include <fstream>
+#include <malloc.h>
 
 #include "file_input_helper.h"
 #include "file_loader.h"
@@ -23,7 +24,7 @@ void FileInputHelper::ParseCustomerInputFile(const char *customer_path) {
             uint32_t buf_cap = TLS_WRITE_BUFF_SIZE;
             auto *local_buffer = (Customer *) malloc(sizeof(Customer) * buf_cap);
             ConsumerBuffer customer_write_buffer(local_buffer, buf_cap, customers, &size_of_customers);
-            char *tmp = (char *) malloc(IO_REQ_SIZE * sizeof(char));
+            char *tmp = (char *) memalign(EXTRA_IO_SIZE, IO_REQ_SIZE * sizeof(char));
 #pragma omp for reduction(max:max_id), reduction(min:min_id)
             for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
                 ssize_t num_reads = loader.ReadToBuf(i, tmp);
@@ -70,6 +71,7 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
     Timer timer;
     {
 #ifdef FILE_LOAD_PREAD
+//        FileLoader loader(order_path, true);
         FileLoader loader(order_path);
 #else
         FileLoaderMMap loader(order_path);
@@ -79,7 +81,7 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
             uint32_t buf_cap = TLS_WRITE_BUFF_SIZE;
             auto *local_buffer = (Order *) malloc(sizeof(Order) * buf_cap);
             OrderBuffer order_write_buffer(local_buffer, buf_cap, orders, &size_of_orders);
-            char *local_buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
+            char *local_buf = (char *) memalign(EXTRA_IO_SIZE, IO_REQ_SIZE * sizeof(char));
 #pragma omp for reduction(max:max_order_date) reduction(min:min_order_date)
             for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
 #ifdef FILE_LOAD_PREAD
@@ -196,6 +198,7 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
     vector<uint32_t> histogram;
     {
 #ifdef FILE_LOAD_PREAD
+//        FileLoader loader(line_item_path, true);
         FileLoader loader(line_item_path);
 #else
         FileLoaderMMap loader(line_item_path);
@@ -205,7 +208,8 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
             uint32_t buf_cap = TLS_WRITE_BUFF_SIZE;
             auto *local_buffer = (LineItem *) malloc(sizeof(LineItem) * buf_cap);
             LineItemBuffer item_write_buffer(local_buffer, buf_cap, items, &size_of_items_);
-            char *local_buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
+            char *local_buf = (char *) memalign(EXTRA_IO_SIZE, IO_REQ_SIZE * sizeof(char));
+
 #pragma omp for reduction(max:max_ship_date) reduction(min:min_ship_date)
             for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
 #ifdef FILE_LOAD_PREAD

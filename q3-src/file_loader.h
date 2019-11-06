@@ -66,8 +66,11 @@ public:
 
     FileLoader() = default;
 
-    explicit FileLoader(const char *file_name) {
+    explicit FileLoader(const char *file_name, bool is_o_direct = false) {
         file_fd = open(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
+        if(is_o_direct){
+            file_fd = open(file_name, O_RDONLY |O_DIRECT, S_IRUSR | S_IWUSR);
+        }
         size = file_size(file_name);
         log_info("Start IO");
     }

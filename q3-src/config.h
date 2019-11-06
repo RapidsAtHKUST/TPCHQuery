@@ -24,6 +24,6 @@
 
 #define DATE_LEN (10)
 
-#define IO_REQ_SIZE (64 * 1024)
+#define IO_REQ_SIZE (4 * 1024 * 1024)
 #define EXTRA_IO_SIZE (4 * 1024)
 
