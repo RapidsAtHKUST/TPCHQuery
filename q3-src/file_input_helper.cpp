@@ -118,6 +118,13 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
                                        return order.customer_key * second_level_range
                                               + order.order_date_bucket - min_order_date;
                                    }, &timer);
+#pragma omp for schedule(dynamic, 1)
+            for (auto i = 0; i < num_buckets; i++) {
+                sort(reordered_orders_ + order_bucket_ptrs_[i], reordered_orders_ + order_bucket_ptrs_[i + 1],
+                     [](Order l, Order r) {
+                         return l.key < r.key;
+                     });
+            }
             assert(order_bucket_ptrs_[num_buckets] == MAX_NUM_ORDERS);
             free(local_buf);
             free(local_buffer);
@@ -225,6 +232,13 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
                                    [items, min_ship_date](uint32_t it) {
                                        return items[it].ship_date_bucket - min_ship_date;
                                    }, &timer);
+#pragma omp for schedule(dynamic, 1)
+            for (auto i = 0; i < num_buckets; i++) {
+                sort(reordered_items_ + bucket_ptrs_item_[i], reordered_items_ + bucket_ptrs_item_[i + 1],
+                     [](LineItem l, LineItem r) {
+                         return l.order_key < r.order_key;
+                     });
+            }
             free(local_buf);
             free(local_buffer);
         }
