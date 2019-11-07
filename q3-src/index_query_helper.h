@@ -54,6 +54,10 @@ public:
     vector<bool*> bmp_arr;
     vector<uint32_t *> dict_arr;
     vector<double*> acc_prices_arr;
+    vector<double*> acc_prices_filtered_arr;
+
+    vector<uint32_t*> order_offset_arr;
+    vector<uint32_t*> order_offset_filtered_arr;
 
     void evaluateWithGPU(
             vector<int32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,

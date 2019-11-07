@@ -69,6 +69,7 @@ if (CUDA_FOUND)
     #    cuda_add_compile_options("--compiler-bindir /usr/local/bin/gcc6")
 
     cuda_add_compile_options("--expt-extended-lambda -Wno-deprecated-gpu-targets")
+    cuda_add_compile_options("-DUM=1")
 
     if (${ENABLE_LOG})
         cuda_add_compile_options("-DUSE_LOG")
