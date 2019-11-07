@@ -19,6 +19,7 @@ class FileInputHelper {
     uint32_t *order_bucket_ptrs_ = nullptr;
 
     // LineItems.
+    uint32_t max_order_id_ = 0;
     uint32_t max_ship_date_ = 0;
     uint32_t min_ship_date_ = UINT32_MAX;
     LineItem *reordered_items_ = nullptr;

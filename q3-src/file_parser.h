@@ -72,7 +72,7 @@ inline void ParseCustomer(ParsingTask task, LockFreeLinearTable &table, Consumer
 }
 
 inline void ParseOrder(ParsingTask task, OrderBuffer &local_write_buffer,
-                       uint32_t &max_date, uint32_t &min_date) {
+                       uint32_t &max_date, uint32_t &min_date, uint32_t& max_order_id) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
 
@@ -87,6 +87,7 @@ inline void ParseOrder(ParsingTask task, OrderBuffer &local_write_buffer,
         uint32_t id = StrToIntOnline(buf, i, end, COL_SPLITTER);
         if (end == task.size_)return;
 #endif
+        max_order_id = max(max_order_id, id);
         i = end + 1;
         assert(id > 0);
 
@@ -116,7 +117,7 @@ inline void ParseOrder(ParsingTask task, OrderBuffer &local_write_buffer,
 }
 
 inline void ParseLineItem(ParsingTask task, LineItemBuffer &local_write_buffer,
-                          uint32_t &max_date, uint32_t &min_date) {
+                          uint32_t &max_date, uint32_t &min_date, uint32_t& max_order_id) {
     auto buf = task.buf_;
     auto i = FindStartIdx(buf);
     while (i < task.size_) {

@@ -84,7 +84,7 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
     {
         ifstream ifs(item_meta_path, std::ifstream::in);
         Archive<ifstream> ar(ifs);
-        ar >> min_ship_date_ >> max_ship_date_ >> item_num_buckets_ >> item_bucket_ptrs_;
+        ar >> max_order_id_ >> min_ship_date_ >> max_ship_date_ >> item_num_buckets_ >> item_bucket_ptrs_;
     }
     size_of_items_ = item_bucket_ptrs_.back();
     log_info("%d, %d, %d, %zu, %u", min_ship_date_, max_ship_date_, item_num_buckets_, item_bucket_ptrs_.size(),

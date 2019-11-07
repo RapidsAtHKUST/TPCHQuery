@@ -51,7 +51,7 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
     {
         ifstream ifs(item_meta_path, std::ifstream::in);
         Archive<ifstream> ar(ifs);
-        ar >> min_ship_date_ >> max_ship_date_ >> item_num_buckets_ >> item_bucket_ptrs_;
+        ar >> max_order_id_ >> min_ship_date_ >> max_ship_date_ >> item_num_buckets_ >> item_bucket_ptrs_;
     }
     size_of_items_ = item_bucket_ptrs_.back();
     log_info("%d, %d, %d, %zu, %u", min_ship_date_, max_ship_date_, item_num_buckets_, item_bucket_ptrs_.size(),
@@ -96,7 +96,7 @@ inline double __sync_fetch_and_add_double(double *address, double val) {
     return __longlong_as_double_CPU(assumed);
 }
 
-void evaluateWithCPU(
+void IndexHelper::evaluateWithCPU(
         uint32_t *order_keys_, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
         uint32_t *item_order_keys_, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
         double *item_prices_, uint32_t order_array_view_size, int lim,
@@ -107,7 +107,6 @@ void evaluateWithCPU(
     auto relative_off = (uint32_t *) malloc(sizeof(uint32_t) * order_array_view_size);
     uint32_t *order_pos_dict;
     BoolArray<uint64_t> bmp;
-    uint32_t max_order_id = 0;
     vector<uint32_t> histogram;
 
     auto acc_prices = (double *) malloc(sizeof(double) * order_array_view_size);
@@ -115,15 +114,12 @@ void evaluateWithCPU(
 #pragma omp parallel
     {
         MemSetOMP(acc_prices, 0, order_array_view_size);
-#pragma omp for reduction(max:max_order_id)
-        for (size_t i = order_bucket_ptr_beg; i < order_bucket_ptr_end; i++) {
-            max_order_id = max(max_order_id, order_keys_[i]);
-        }
+
 #pragma omp single
         {
-            log_info("BMP Size: %u", max_order_id + 1);
-            bmp = BoolArray<uint64_t >(max_order_id+1);
-            order_pos_dict = (uint32_t *) malloc(sizeof(uint32_t) * (max_order_id + 1));
+            log_info("BMP Size: %u", max_order_id_ + 1);
+            bmp = BoolArray<uint64_t >(max_order_id_+1);
+            order_pos_dict = (uint32_t *) malloc(sizeof(uint32_t) * (max_order_id_ + 1));
         }
 #pragma omp single
         log_info("Before Construction Data Structures: %.6lfs", timer.elapsed());
@@ -138,7 +134,7 @@ void evaluateWithCPU(
 #pragma omp for
         for (size_t i = lineitem_bucket_ptr_beg; i < lineitem_bucket_ptr_end; i++) {
             auto order_key = item_order_keys_[i];
-            if ((order_key <= max_order_id) && (bmp[order_key])) {
+            if (bmp[order_key]) {
                 __sync_fetch_and_add_double(&acc_prices[order_pos_dict[order_key]], item_prices_[i]);
             }
         }

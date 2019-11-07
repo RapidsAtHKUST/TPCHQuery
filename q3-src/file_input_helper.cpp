@@ -67,6 +67,7 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
     uint32_t *cur_write_off = nullptr;
     uint32_t max_order_date = 0;
     uint32_t min_order_date = UINT32_MAX;
+    uint32_t max_order_id = 0;
     Timer timer;
     {
 #ifdef FILE_LOAD_PREAD
@@ -80,12 +81,12 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
             auto *local_buffer = (Order *) malloc(sizeof(Order) * buf_cap);
             OrderBuffer order_write_buffer(local_buffer, buf_cap, orders, &size_of_orders);
             char *local_buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
-#pragma omp for reduction(max:max_order_date) reduction(min:min_order_date)
+#pragma omp for reduction(max:max_order_date) reduction(min:min_order_date) reduction(max: max_order_id)
             for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
 #ifdef FILE_LOAD_PREAD
                 ssize_t num_reads = loader.ReadToBuf(i, local_buf);
                 ParseOrder({.buf_= local_buf, .size_= num_reads}, order_write_buffer,
-                           max_order_date, min_order_date);
+                           max_order_date, min_order_date, max_order_id);
 #else
                 char *tmp = nullptr;
                 ssize_t num_reads = loader.ReadToBuf(i, tmp, local_buf);
@@ -137,6 +138,7 @@ void FileInputHelper::ParseOrderInputFile(const char *order_path) {
     }
     free(cur_write_off);
     free(orders);
+    max_order_id_ = max_order_id;
 }
 
 void FileInputHelper::WriteOrderIndexToFIle(const char *order_path) {
@@ -194,6 +196,7 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
     uint32_t *cur_write_off_item = nullptr;
     Timer timer;
     vector<uint32_t> histogram;
+    uint32_t max_order_id = 0;
     {
 #ifdef FILE_LOAD_PREAD
         FileLoader loader(line_item_path);
@@ -206,12 +209,12 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
             auto *local_buffer = (LineItem *) malloc(sizeof(LineItem) * buf_cap);
             LineItemBuffer item_write_buffer(local_buffer, buf_cap, items, &size_of_items_);
             char *local_buf = (char *) malloc(IO_REQ_SIZE * sizeof(char));
-#pragma omp for reduction(max:max_ship_date) reduction(min:min_ship_date)
+#pragma omp for reduction(max:max_ship_date) reduction(min:min_ship_date) reduction(max: max_order_id)
             for (size_t i = 0; i < loader.size; i += IO_REQ_SIZE - EXTRA_IO_SIZE) {
 #ifdef FILE_LOAD_PREAD
                 ssize_t num_reads = loader.ReadToBuf(i, local_buf);
                 ParseLineItem({.buf_= local_buf, .size_= num_reads}, item_write_buffer,
-                              max_ship_date, min_ship_date);
+                              max_ship_date, min_ship_date, max_order_id);
 #else
                 char *tmp = nullptr;
                 ssize_t num_reads = loader.ReadToBuf(i, tmp, local_buf);
@@ -250,6 +253,7 @@ void FileInputHelper::ParseLineItemInputFile(const char *line_item_path) {
     }
     free(cur_write_off_item);
     free(items);
+    max_order_id_ = max(max_order_id, max_order_id_);
 }
 
 void FileInputHelper::WriteLineItemIndexToFile(const char *line_item_path) {
@@ -265,7 +269,7 @@ void FileInputHelper::WriteLineItemIndexToFile(const char *line_item_path) {
         int32_t num_buckets = max_ship_date_ - min_ship_date_ + 1;
         vector<uint32_t> bucket_ptrs_stl(num_buckets + 1);
         memcpy(&bucket_ptrs_stl.front(), bucket_ptrs_item_, sizeof(uint32_t) * (num_buckets + 1));
-        ar << min_ship_date_ << max_ship_date_ << num_buckets << bucket_ptrs_stl;
+        ar << max_order_id_ << min_ship_date_ << max_ship_date_ << num_buckets << bucket_ptrs_stl;
         ofs.flush();
     }
     log_info("Meta Cost: %.6lfs", write_timer.elapsed());
