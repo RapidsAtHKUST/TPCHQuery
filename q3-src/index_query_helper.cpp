@@ -106,7 +106,6 @@ void evaluateWithCPU(
     Timer timer;
     auto relative_off = (uint32_t *) malloc(sizeof(uint32_t) * order_array_view_size);
     uint32_t *order_pos_dict;
-//    bool *bmp;
     BoolArray<uint64_t> bmp;
     uint32_t max_order_id = 0;
     vector<uint32_t> histogram;
@@ -116,10 +115,6 @@ void evaluateWithCPU(
 #pragma omp parallel
     {
         MemSetOMP(acc_prices, 0, order_array_view_size);
-//#pragma omp for
-//        for (size_t i = 0; i < order_array_view_size; i++) {
-//            assert(acc_prices[i] == 0);
-//        }
 #pragma omp for reduction(max:max_order_id)
         for (size_t i = order_bucket_ptr_beg; i < order_bucket_ptr_end; i++) {
             max_order_id = max(max_order_id, order_keys_[i]);
@@ -127,17 +122,14 @@ void evaluateWithCPU(
 #pragma omp single
         {
             log_info("BMP Size: %u", max_order_id + 1);
-//            bmp = (bool *) malloc(sizeof(bool) * (max_order_id + 1));
             bmp = BoolArray<uint64_t >(max_order_id+1);
             order_pos_dict = (uint32_t *) malloc(sizeof(uint32_t) * (max_order_id + 1));
         }
-//        MemSetOMP(bmp, 0, (max_order_id + 1));
 #pragma omp single
         log_info("Before Construction Data Structures: %.6lfs", timer.elapsed());
 #pragma omp for
         for (auto i = order_bucket_ptr_beg; i < order_bucket_ptr_end; i++) {
             auto order_key = order_keys_[i];
-//            bmp[order_key] = true;
             bmp.set_atomic(order_key);
             order_pos_dict[order_key] = i - order_bucket_ptr_beg;
         }
@@ -165,7 +157,6 @@ void evaluateWithCPU(
         }
     }
     free(order_pos_dict);
-//    free(bmp);
     free(acc_prices);
     free(relative_off);
     log_info("Non Zeros: %zu", size_of_results);
