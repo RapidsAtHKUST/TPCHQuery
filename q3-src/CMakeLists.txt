@@ -86,8 +86,7 @@ if (CUDA_FOUND AND ENABLE_GPU)
         cuda_add_compile_options("-DUSE_GPU=1")           #use GPU for evaluation
     endif ()
 
-    set(JETBRAIN_FAKE_IDX_FILES file_loader_gpu.h)
-    cuda_add_library(query_offloading query_offloading_gpu.cu ${JETBRAIN_FAKE_IDX_FILES})
+    cuda_add_library(query_offloading query_offloading_gpu.cu)
 
     add_executable(tpch-q3-submit ${CPP_FILES})
     target_compile_definitions(tpch-q3-submit PRIVATE USE_GPU=1)

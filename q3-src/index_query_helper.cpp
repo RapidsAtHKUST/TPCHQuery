@@ -198,19 +198,17 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
     // Join & Aggregate.
     auto results = (Result *) malloc(sizeof(Result) * order_array_view_size);
     uint32_t size_of_results = 0;
-//#ifdef USE_GPU
-//    log_info("%u", order_keys_arr[0][order_bucket_ptrs_[o_bucket_beg]]);
-//#endif
+
     Timer timer;
     auto order_bucket_ptr_beg = order_bucket_ptrs_[o_bucket_beg];
     auto order_bucket_ptr_end = order_bucket_ptrs_[o_bucket_end];
 
 #ifdef USE_GPU
     evaluateWithGPU(
-            order_keys_arr, order_bucket_ptr_beg, order_bucket_ptr_end,
-            item_order_keys_arr, item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
-            bmp_arr,  dict_arr,
-            item_prices_arr, order_array_view_size, limit, size_of_results, results);
+            order_bucket_ptr_beg, order_bucket_ptr_end,
+            item_bucket_ptrs_[item_bucket_beg], item_bucket_ptrs_[item_bucket_end],
+            order_array_view_size, limit,
+            size_of_results, results);
 #else
     evaluateWithCPU(
             order_keys_, order_bucket_ptr_beg, order_bucket_ptr_end,
@@ -218,15 +216,6 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
             item_prices_, order_array_view_size, limit, size_of_results, results);
 #endif
 
-#ifdef USE_GPU
-    for (auto i = 0; i < min<int32_t>(size_of_results, limit); i++) {
-        char date[DATE_LEN + 1];
-        date[DATE_LEN] = '\0';
-        ConvertBucketIDToDate(date, order_dates_[results[i].order_offset]);
-        printf("%u|%s|%.2lf\n",
-               order_keys_arr[0][results[i].order_offset], date, results[i].price);
-    }
-#else
     for (auto i = 0; i < min<int32_t>(size_of_results, limit); i++) {
         char date[DATE_LEN + 1];
         date[DATE_LEN] = '\0';
@@ -234,6 +223,6 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
         printf("%u|%s|%.2lf\n",
                order_keys_[results[i].order_offset], date, results[i].price);
     }
-#endif
+
     log_info("Query Time: %.6lfs", timer.elapsed());
 }
