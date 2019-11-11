@@ -198,9 +198,9 @@ void IndexHelper::Query(string category, string order_date, string ship_date, in
     // Join & Aggregate.
     auto results = (Result *) malloc(sizeof(Result) * order_array_view_size);
     uint32_t size_of_results = 0;
-#ifdef USE_GPU
-    log_info("%u", order_keys_arr[0][order_bucket_ptrs_[o_bucket_beg]]);
-#endif
+//#ifdef USE_GPU
+//    log_info("%u", order_keys_arr[0][order_bucket_ptrs_[o_bucket_beg]]);
+//#endif
     Timer timer;
     auto order_bucket_ptr_beg = order_bucket_ptrs_[o_bucket_beg];
     auto order_bucket_ptr_end = order_bucket_ptrs_[o_bucket_end];

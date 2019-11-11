@@ -27,12 +27,14 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
     dict_arr.resize(num_devices);
     acc_prices_arr.resize(num_devices);
 
+#ifdef UM
 #pragma omp parallel num_threads(num_devices)
     {
         auto gpu_id = omp_get_thread_num();
         cudaSetDevice(gpu_id);
         CUDA_MALLOC(&acc_prices_arr[gpu_id], sizeof(double) * MAX_NUM_ORDERS, nullptr);
     }
+#endif
 
     // Load Order.
     string order_key_path = order_path + ORDER_KEY_BIN_FILE_SUFFIX;
@@ -69,8 +71,14 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
 
             auto &bmp = bmp_arr[gpu_id];
             auto &order_pos_dict = dict_arr[gpu_id];
+#ifdef UM
             CUDA_MALLOC(&bmp, sizeof(bool) * ( ORDER_MAX_ID + 1), nullptr);
             CUDA_MALLOC(&order_pos_dict, sizeof(uint32_t) * (ORDER_MAX_ID + 1), nullptr);
+#else
+            size_t bitmap_cnt = ((ORDER_MAX_ID+1)+sizeof(uint32_t)*8-1)/ sizeof(uint32_t)/8;
+            log_trace("Allocated bitmap size: %lu bytes.", sizeof(uint32_t)*bitmap_cnt);
+            checkCudaErrors(cudaMalloc((void**)&bmp, sizeof(uint32_t)*bitmap_cnt));
+#endif
         }));
     }
 
@@ -96,7 +104,11 @@ IndexHelper::IndexHelper(string order_path, string line_item_path) {
             auto gpu_id = i;
             cudaSetDevice(gpu_id);
             item_order_keys_arr[gpu_id] = GetIndexArr<uint32_t>(item_order_id_path.c_str(), fd, size_of_items_);
+#ifdef UM
             item_prices_arr[gpu_id] = GetIndexArr<double>(item_price_path.c_str(), fd, size_of_items_);
+#else
+            item_prices_arr[gpu_id] = (double*) malloc(sizeof(double)*size_of_items_);
+#endif
         }));
     }
     for(auto &future: futures) {
@@ -122,6 +134,22 @@ void buildBooleanArray(
 }
 
 __global__
+void buildBitmap(
+        uint32_t start_pos, uint32_t end_pos,
+        uint32_t *order_keys_, uint32_t *bmp) {
+    auto gtid = threadIdx.x + blockDim.x * blockIdx.x + start_pos;
+    auto gtnum = blockDim.x * gridDim.x;
+
+    while (gtid < end_pos) {
+        auto order_key = order_keys_[gtid];
+        auto byte_pos = order_key >> 5;
+        auto offset_in_byte = order_key & 31;
+        atomicOr(&bmp[byte_pos], (uint32_t)(1<<offset_in_byte));
+        gtid += gtnum;
+    }
+}
+
+__global__
 void filterJoin(
         uint32_t start_pos, uint32_t end_pos,
         uint32_t *item_order_keys_, double *acc_prices, double *item_prices_, uint32_t max_order_id,
@@ -138,10 +166,64 @@ void filterJoin(
     }
 }
 
+/*only retrieve the offsets of the matching tuples in the lineitem table*/
+__global__
+void bitmapJoinCnt(
+        uint32_t start_pos, uint32_t end_pos,
+        uint32_t *item_order_keys_, uint32_t max_order_id,
+        uint32_t *bmp, uint32_t *cnts) {
+    auto gtid = threadIdx.x + blockDim.x * blockIdx.x + start_pos;
+    auto gtnum = blockDim.x * gridDim.x;
+    __shared__ uint32_t lcnt;
+
+    if (threadIdx.x == 0) lcnt = 0;
+    __syncthreads();
+
+    while (gtid < end_pos) {
+        auto order_key = item_order_keys_[gtid];
+        auto byte_pos = order_key >> 5;
+        auto offset_in_byte = order_key & 31;
+
+        if ((order_key <= max_order_id) && ((bmp[byte_pos] >> offset_in_byte) & 0b1)) {
+            atomicAdd(&lcnt, 1);
+        }
+        gtid += gtnum;
+    }
+    __syncthreads();
+
+    if (threadIdx.x == 0)
+        cnts[blockIdx.x] = lcnt;
+}
+
+__global__
+void bitmapJoinWrt(
+        uint32_t start_pos, uint32_t end_pos,
+        uint32_t *item_order_keys_, uint32_t max_order_id,
+        uint32_t *bmp, uint32_t *cnts, uint32_t *result) {
+    auto gtid = threadIdx.x + blockDim.x * blockIdx.x + start_pos;
+    auto gtnum = blockDim.x * gridDim.x;
+    __shared__ uint32_t lpos;
+
+    if (threadIdx.x == 0) lpos = cnts[blockIdx.x];
+    __syncthreads();
+
+    while (gtid < end_pos) {
+        auto order_key = item_order_keys_[gtid];
+        auto byte_pos = order_key >> 5;
+        auto offset_in_byte = order_key & 31;
+
+        if ((order_key <= max_order_id) && ((bmp[byte_pos] >> offset_in_byte) & 0b1)) {
+            auto cur = atomicAdd(&lpos, 1);
+            result[cur] = gtid;
+        }
+        gtid += gtnum;
+    }
+}
+
 void IndexHelper::evaluateWithGPU(
         vector<uint32_t *> order_keys_arr, uint32_t order_bucket_ptr_beg, uint32_t order_bucket_ptr_end,
         vector<uint32_t *> item_order_keys_arr, uint32_t lineitem_bucket_ptr_beg, uint32_t lineitem_bucket_ptr_end,
-        vector<bool*> bmp_arr, vector<uint32_t *> dict_arr,
+        vector<uint32_t*> bmp_arr, vector<uint32_t *> dict_arr,
         vector<double *> item_prices_arr, uint32_t order_array_view_size, int lim, uint32_t &size_of_results, Result *t) {
     CUDAMemStat memstat_detail;
     CUDATimeStat timing_detail;
@@ -163,9 +245,8 @@ void IndexHelper::evaluateWithGPU(
 
     /*compute max_order_id with a single GPU*/
     cudaSetDevice(0);
-    uint32_t max_order_id = CUBMax(&order_keys_arr[0][order_bucket_ptr_beg], (order_bucket_ptr_end - order_bucket_ptr_beg),
-                                  memstat, timing);
-    log_info("BMP Size: %u", max_order_id + 1);
+    uint32_t max_order_id = CUBMax(&order_keys_arr[0][order_bucket_ptr_beg], (order_bucket_ptr_end - order_bucket_ptr_beg), memstat, timing);
+    log_info("BMP Size: %u bytes", (max_order_id + 1 + 7)/8 );
     log_info("After get max_order_id: %.2f s.", timer.elapsed());
 
     checkCudaErrors(cudaDeviceSynchronize());
@@ -173,7 +254,7 @@ void IndexHelper::evaluateWithGPU(
 #pragma omp parallel num_threads(num_devices)
     {
         auto gpu_id = omp_get_thread_num();
-        log_info("TID: %d, BMP Size: %u", gpu_id, max_order_id + 1);
+        log_info("TID: %d, BMP Size: %u bytes", gpu_id, (max_order_id + 1 + 7)/8 );
 
         cudaSetDevice(gpu_id);
 
@@ -184,28 +265,52 @@ void IndexHelper::evaluateWithGPU(
         log_info("GPU ID: %d, lineitem range: [%u, %u)", gpu_id, lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu);
 
 //        CUDA_MALLOC(&acc_prices_arr[gpu_id], sizeof(double) * order_array_view_size, memstat);
-        checkCudaErrors(cudaMemset(acc_prices_arr[gpu_id], 0, sizeof(double) * order_array_view_size));
-        log_info("After malloc acc_prices_arr: %.2f s.", timer.elapsed());
+//        checkCudaErrors(cudaMemset(acc_prices_arr[gpu_id], 0, sizeof(double) * order_array_view_size));
+//        log_info("After malloc acc_prices_arr: %.2f s.", timer.elapsed());
 
         /*construct the mapping*/
         auto bmp = bmp_arr[gpu_id];
-        auto order_pos_dict = dict_arr[gpu_id];
-        checkCudaErrors(cudaMemset(bmp, 0, sizeof(bool) * (max_order_id + 1)));
+//        auto order_pos_dict = dict_arr[gpu_id];
+        checkCudaErrors(cudaMemset(bmp, 0, sizeof(bool) * (max_order_id + 1 + 7)/8));
 
         log_info("TID: %d, Before Construction Data Structures: %.6lfs", gpu_id, timer.elapsed());
 
-        /*build the boolean filter*/
-        execKernel(buildBooleanArray, 1024, 256, timing, false,
+//        /*build the boolean filter*/
+//        execKernel(buildBooleanArray, 1024, 256, timing, false,
+//                   order_bucket_ptr_beg, order_bucket_ptr_end,
+//                   order_keys_arr[gpu_id], bmp, order_pos_dict);
+
+        /*build the bitmap*/
+        execKernel(buildBitmap, 1024, 256, timing, false,
                    order_bucket_ptr_beg, order_bucket_ptr_end,
-                   order_keys_arr[gpu_id], bmp, order_pos_dict);
+                   order_keys_arr[gpu_id], bmp);
 
-        log_info("TID: %d, Before Aggregation: %.6lfs", gpu_id,  timer.elapsed());
+        log_info("TID: %d, Before join count: %.6lfs", gpu_id,  timer.elapsed());
 
 
-        execKernel(filterJoin, 1024, 256, timing, false,
+//        execKernel(filterJoin, 1024, 256, timing, false,
+//                   lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu,
+//                   item_order_keys_arr[gpu_id], acc_prices_arr[gpu_id], item_prices_arr[gpu_id], max_order_id, bmp, order_pos_dict);
+
+        int grid_size = 1024, block_size = 256;
+        uint32_t *cnts = nullptr;
+        checkCudaErrors(cudaMallocManaged((void**)&cnts, sizeof(uint32_t)*grid_size));
+
+        execKernel(bitmapJoinCnt, grid_size, block_size, timing, false,
+           lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu,
+           item_order_keys_arr[gpu_id], max_order_id, bmp, cnts);
+
+        auto num_matches = CUBScanExclusive(cnts, cnts, grid_size, memstat, timing);
+
+        log_info("#matching items: %d.", num_matches);
+        log_info("TID: %d, Before join write: %.6lfs", gpu_id, timer.elapsed());
+
+        uint32_t *res = nullptr;
+        CUDA_MALLOC(&res, sizeof(uint32_t)*num_matches, nullptr); //use unified memory
+
+        execKernel(bitmapJoinWrt, grid_size, block_size, timing, false,
                    lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu,
-                   item_order_keys_arr[gpu_id], acc_prices_arr[gpu_id], item_prices_arr[gpu_id], max_order_id, bmp, order_pos_dict);
-
+                   item_order_keys_arr[gpu_id], max_order_id, bmp, cnts, res);
 
         log_info("TID: %d, Before Select: %.6lfs", gpu_id, timer.elapsed());
 
@@ -214,6 +319,7 @@ void IndexHelper::evaluateWithGPU(
     }
 
     log_info("Parallel processing time: %.2f s.", timer.elapsed());
+    return;
 
     /*add up the acc_prices*/
     auto iter_begin = thrust::make_counting_iterator(0u);
