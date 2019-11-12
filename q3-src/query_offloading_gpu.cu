@@ -268,7 +268,7 @@ void IndexHelper::evaluateWithGPU(
 
         int grid_size = 1024, block_size = 256;
         uint32_t *cnts = nullptr;
-        checkCudaErrors(cudaMallocManaged((void**)&cnts, sizeof(uint32_t)*grid_size));
+        CUDA_MALLOC(&cnts, sizeof(uint32_t)*grid_size, nullptr);
 
         execKernel(bitmapJoinCnt, grid_size, block_size, timing, false,
            lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu,
@@ -276,19 +276,19 @@ void IndexHelper::evaluateWithGPU(
 
         num_matches_[gpu_id] = CUBScanExclusive(cnts, cnts, grid_size, memstat, timing);
 
-        log_info("#matching items: %d.", num_matches_[gpu_id]);
+        log_info("TID: %d, #matching items: %d.", gpu_id, num_matches_[gpu_id]);
         log_info("TID: %d, Before join write: %.6lfs", gpu_id, timer.elapsed());
 
-        CUDA_MALLOC(&matches_[gpu_id], sizeof(uint32_t)*num_matches_[gpu_id], nullptr); //use unified memory
+        if (num_matches_[gpu_id] > 0) {
+            CUDA_MALLOC(&matches_[gpu_id], sizeof(uint32_t)*num_matches_[gpu_id], nullptr); //use unified memory
+            execKernel(bitmapJoinWrt, grid_size, block_size, timing, false,
+                       lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu,
+                       item_order_keys_arr_[gpu_id], max_order_id, bmp, cnts, matches_[gpu_id]);
 
-        execKernel(bitmapJoinWrt, grid_size, block_size, timing, false,
-                   lineitem_bucket_ptr_beg_gpu, lineitem_bucket_ptr_end_gpu,
-                   item_order_keys_arr_[gpu_id], max_order_id, bmp, cnts, matches_[gpu_id]);
-
+            /*prefetched to CPU in advance*/
+            checkCudaErrors(cudaMemPrefetchAsync(matches_[gpu_id], sizeof(uint32_t)*num_matches_[gpu_id], cudaCpuDeviceId));
+        }
         log_info("TID: %d, Before Select: %.6lfs", gpu_id, timer.elapsed());
-
-        /*prefetched to CPU in advance*/
-        checkCudaErrors(cudaMemPrefetchAsync(matches_[gpu_id], sizeof(uint32_t)*num_matches_[gpu_id], cudaCpuDeviceId));
     }
 
     log_info("Parallel processing time: %.2f s.", timer.elapsed());
