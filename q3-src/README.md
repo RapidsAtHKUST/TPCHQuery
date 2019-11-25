@@ -1,65 +1,40 @@
 # TPC-H Q3
 
-## Input Format
+## Compile 
 
-```
-2019-10-19 10:48:53 INFO  (et: 0.016136 s) (func: ParseCustomer)  file_parser.h:110: FURNITURE
-2019-10-19 10:48:53 INFO  (et: 0.016309 s) (func: ParseCustomer)  file_parser.h:110: MACHINERY
-2019-10-19 10:48:53 INFO  (et: 0.016356 s) (func: ParseCustomer)  file_parser.h:110: AUTOMOBILE
-2019-10-19 10:48:53 INFO  (et: 0.016393 s) (func: ParseCustomer)  file_parser.h:110: BUILDING
-2019-10-19 10:48:53 INFO  (et: 0.016430 s) (func: ParseCustomer)  file_parser.h:110: HOUSEHOLD
-```
-
-```
-==> customer.txt <==
-1|BUILDING
-2|AUTOMOBILE
-3|AUTOMOBILE
-4|MACHINERY
-5|HOUSEHOLD
-6|AUTOMOBILE
-7|AUTOMOBILE
-8|BUILDING
-9|FURNITURE
-10|HOUSEHOLD
-
-==> lineitem.txt <==
-1|33203.72|1996-03-13
-1|69788.52|1996-04-12
-1|16381.28|1996-01-29
-1|29767.92|1996-04-21
-1|37596.96|1996-03-30
-1|48267.84|1996-01-30
-2|71798.72|1997-01-28
-3|73200.15|1994-02-02
-3|75776.05|1993-11-09
-3|47713.86|1994-01-16
-
-==> orders.txt <==
-1|3689999|1996-01-02
-2|7800163|1996-12-01
-3|12331391|1993-10-14
-4|13677602|1995-10-11
-5|4448479|1994-07-30
-6|5562202|1992-02-21
-7|3913430|1996-01-10
-32|13005694|1995-07-16
-33|6695788|1993-10-27
-34|6100004|1998-07-21
-```
-
-## Compile``
-
-```
-mkdir -p build-dir-path
-cd build-dir-path
-cmake source-dir-path
-make -j
-```
+see [../compile.sh](../compile.sh)
 
 ## Run
 
-```
-./tpch-q3 -c /tmp/tpch-tables/customer.txt -o /tmp/tpch-tables/orders.txt -l /tmp/tpch-tables/lineitem.txt --cf BUILDING --of 1995-03-29 --lf 1995-03-27 --limit 5
-```
+see [../run.sh](../run.sh)
+
+## 目录结构
+
+Main File: [tpch_q3_main_submit.cpp](tpch_q3_main_submit.cpp)
+
+### Parsing and Indexing
+
+Files/Folders | Description
+--- | ---
+[file_loader.h](file_loader.h) | Input File Loading
+[file_parser.h](file_parser.h), [parsing_util.h](parsing_util.h) | Parsing
+[file_input_helper.h](file_input_helper.h), [file_input_helper.cpp](file_input_helper.cpp) | Indexing
+[lock_free_table.h](lock_free_table.h) | For the customer category mapping
+
+### Querying
+
+Files/Folders | Description
+--- | ---
+[index_query_helper.cpp](index_query_helper.cpp), [index_query_helper.h](index_query_helper.h) | Query Logic
+[query_offloading_gpu.cu](query_offloading_gpu.cu) | GPU Query Acceleration
+
+### Utils
+
+Files/Folders | Description
+--- | ---
+[cuda/cub](cuda/cub), [cuda/primitives.cuh](cuda/primitives.cuh) | GPU primitives
+[cuda/CUDAStat.cuh](cuda/CUDAStat.cuh), [cuda/cuda_base.cuh](cuda/cuda_base.cuh) | CUDA helpers
+[util/primitives](util/primitives) | 并行有关的primitives
+[util/archive.h](util/archive.h) | 序列化meta文件的util
+[util/timer.h](util/timer.h), [util/util.h](util/util.h), [util/log.cpp](util/log.cpp) | timer, loggers
 
